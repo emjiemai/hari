@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.db
+*.db-journal
+.pytest_cache/
+logs/
+# spec documents stay local (they name staff)
+*.docx
