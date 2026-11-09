@@ -70,7 +70,7 @@ async def new_employee(message: Message, state: FSMContext) -> None:
         return
     await state.clear()
     await state.set_state(NewEmp.full_name)
-    await message.answer(T.say(hr, "➕ Янги ходим карточкаси. Ҳар қадамда /bekor — бекор қилиш.\n\n"
+    await message.answer(T.say(hr, "Янги ходим карточкаси. Ҳар қадамда /bekor — бекор қилиш.\n\n"
                                    "1/8. Ходимнинг тўлиқ ФИШини ёзинг (фамилия, исм, отасининг исми):"))
 
 
@@ -179,7 +179,7 @@ async def ne_lang(query: CallbackQuery, callback_data: PickCb, state: FSMContext
     await state.set_state(NewEmp.confirm)
     await query.message.edit_reply_markup(reply_markup=None)
     await query.message.answer(summary, reply_markup=inline([[
-        ("✅ Сақлаш", PickCb(field="confirm", value="yes")), ("❌ Бекор", PickCb(field="confirm", value="no"))]]))
+        ("Сақлаш", PickCb(field="confirm", value="yes")), ("Бекор", PickCb(field="confirm", value="no"))]]))
     await query.answer()
 
 
@@ -209,7 +209,7 @@ async def ne_confirm(query: CallbackQuery, callback_data: PickCb, state: FSMCont
             return
         await O.create_plan(session, emp, start, actor_id=hr.id)
         token = await make_invite(session, emp, created_by=hr.id)
-    head = "✅ Карточка сақланди" if created else "ℹ️ Бу ходим аллақачон бор — янги карточка яратилмади"
+    head = "Карточка сақланди" if created else "Бу ходим аллақачон бор — янги карточка яратилмади"
     await query.message.answer(
         f"{head}: {emp.code} — {emp.full_name}.\nМослашув режаси тайёр.\n\n"
         f"Шахсий ҳавола (бир марталик, {settings.invite_ttl_hours} соат):\n{invite_link(token)}\n\n"
@@ -243,7 +243,7 @@ async def staff_list(message: Message) -> None:
             return
         people = await list_staff(session)
         plans = {p.employee_id: p for p in (await session.execute(select(OnboardingPlan))).scalars()}
-        lines = ["👥 Ходимлар (✅ — Telegram боғланган, ⏳ — ҳали йўқ):"]
+        lines = ["Ходимлар (✅ — Telegram боғланган, ⏳ — ҳали йўқ):"]
         for p in people:
             plan = plans.get(p.id)
             prog = ""
@@ -280,12 +280,12 @@ async def work_queue(message: Message, bot: Bot) -> None:
             about = await session.get(Employee, c.about_employee_id) if c.about_employee_id else None
             case_cards.append((c, case_card(c, requester, about)))
     if not mine_steps and not case_cards:
-        await message.answer(T.say(me, "📥 Иш навбатингиз бўш."))
+        await message.answer(T.say(me, "Иш навбатингиз бўш."))
         return
     for s, owner in mine_steps:
-        await message.answer(T.say(me, f"🧭 {owner.full_name}: «{s.title}»\nНатижа: {s.proof_text or '(файл)'}"),
-                             reply_markup=inline([[("✅ Қабул", StepCb(action="ok", step_id=s.id)),
-                                                   ("↩️ Қайтариш", StepCb(action="back", step_id=s.id))]]))
+        await message.answer(T.say(me, f"Мослашув, {owner.full_name}: «{s.title}»\nНатижа: {s.proof_text or '(файл)'}"),
+                             reply_markup=inline([[("Қабул қилиш", StepCb(action="ok", step_id=s.id)),
+                                                   ("Қайтариш", StepCb(action="back", step_id=s.id))]]))
     for c, card in case_cards:
         status = {"submitted": "янги", "accepted": "кўрилмоқда", "decided": "жавоб берилган, очиқ"}.get(c.status, c.status)
         await message.answer(T.say(me, f"{card}\nҲолат: {status}"), reply_markup=case_buttons(c))
@@ -309,7 +309,7 @@ async def step_accept(query: CallbackQuery, callback_data: StepCb, bot: Bot) -> 
         plan = await O.get_plan(session, owner.id)
         finished = plan is not None and plan.status == "done"
     await query.message.edit_reply_markup(reply_markup=None)
-    await query.message.answer(T.say(me, f"✅ Қабул қилинди: {owner.full_name} — «{step.title}»."))
+    await query.message.answer(T.say(me, f"Қабул қилинди: {owner.full_name} — «{step.title}»."))
     await query.answer()
     await notify(bot, owner, T.STEP_ACCEPTED_TO_EMP.format(title=step.title))
     if finished:
@@ -337,7 +337,7 @@ async def step_return(message: Message, state: FSMContext, bot: Bot) -> None:
         except O.StepError:
             await message.answer(T.say(me, "Қайтариб бўлмайди: ҳуқуқ йўқ ёки қадам аллақачон ҳал қилинган."))
             return
-    await message.answer(T.say(me, f"↩️ Қайтарилди: {owner.full_name} — «{step.title}»."))
+    await message.answer(T.say(me, f"Қайтарилди: {owner.full_name} — «{step.title}»."))
     await notify(bot, owner, T.STEP_RETURNED_TO_EMP.format(title=step.title, reason=step.return_reason or "—"))
 
 
@@ -358,7 +358,7 @@ async def case_take(query: CallbackQuery, callback_data: CaseActCb, bot: Bot) ->
             return
         requester = await session.get(Employee, case.requester_id)
     await query.answer(T.say(me, "Қабул қилинди"))
-    await notify(bot, requester, f"📨 {case.number}: мурожаатингизни {me.full_name} кўриб чиқмоқда.")
+    await notify(bot, requester, f"{case.number}: мурожаатингизни {me.full_name} кўриб чиқмоқда.")
 
 
 @router.callback_query(CaseActCb.filter(F.action == "answer"))
@@ -383,8 +383,8 @@ async def case_answer_text(message: Message, state: FSMContext) -> None:
     await state.set_state(CaseAnswer.close)
     number = (await state.get_data())["number"]
     await message.answer("Масала тўлиқ ҳал бўлдими?", reply_markup=inline([[
-        ("✅ Ҳа, ёпиш", CaseActCb(action="close_yes", number=number)),
-        ("⏳ Йўқ, очиқ қолсин", CaseActCb(action="close_no", number=number))]]))
+        ("Ҳа, ёпиш", CaseActCb(action="close_yes", number=number)),
+        ("Йўқ, очиқ қолсин", CaseActCb(action="close_no", number=number))]]))
 
 
 @router.callback_query(CaseAnswer.close, CaseActCb.filter(F.action.in_({"close_yes", "close_no"})))
@@ -408,5 +408,5 @@ async def case_answer_send(query: CallbackQuery, callback_data: CaseActCb, state
     await query.answer()
     await query.message.answer(f"Юборилди. {case.number} — {'ёпилди' if close else 'очиқ қолди'}.")
     state_text = "Мурожаат ёпилди." if close else "Мурожаат очиқ: кейинги қадам бажарилгач ёпилади."
-    await notify(bot, requester, f"📨 {case.number} — {case.title}\n\nЖавоб ({me.full_name}):\n{case.decision}\n\n"
-                                 f"{state_text}\nЭътирозингиз бўлса, «📝 Мурожаат» орқали ёзинг.")
+    await notify(bot, requester, f"{case.number} — {case.title}\n\nЖавоб ({me.full_name}):\n{case.decision}\n\n"
+                                 f"{state_text}\nЭътирозингиз бўлса, «Мурожаат» орқали ёзинг.")

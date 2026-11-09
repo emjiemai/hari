@@ -81,7 +81,7 @@ def nudge_text(emp: Employee, steps: list) -> str:  # noqa: ANN001
     lines = [f"Хайрли тонг, {emp.full_name.split()[1] if len(emp.full_name.split()) > 1 else emp.full_name}. "
              "Мослашув режангиздаги очиқ қадамлар:"]
     lines += [f"• {s.title}" for s in steps[:5]]
-    lines.append("\n«📋 Режам» тугмасини босинг. Қайси қадам тушунарсиз бўлса, ёзинг.")
+    lines.append("\n«Режам» тугмасини босинг. Қайси қадам тушунарсиз бўлса, ёзинг.")
     return "\n".join(lines)
 
 
@@ -115,8 +115,8 @@ async def case_escalations(session: AsyncSession, now: datetime) -> list[str]:
         if case.assignee_id:
             assignee = await session.get(Employee, case.assignee_id)
             msg = await queue(session, assignee, "escalation", f"case_due:{case.id}",
-                              f"⏰ {case.number} ({case.title}) — биринчи жавоб муддати ўтди ({fmt(case.first_response_due)}). "
-                              "«📥 Иш навбати»дан жавоб беринг.", now)
+                              f"{case.number} ({case.title}) — биринчи жавоб муддати ўтди ({fmt(case.first_response_due)}). "
+                              "«Иш навбати»дан жавоб беринг.", now)
             if msg:
                 queued.append(msg.id)
         for owner in owners:

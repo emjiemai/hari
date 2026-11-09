@@ -13,7 +13,7 @@ from hari.worktime import fmt
 
 def case_card(case: HRCase, requester: Employee, about: Employee | None) -> str:
     lines = [
-        f"📨 Янги мурожаат {case.number}",
+        f"Янги мурожаат {case.number}",
         f"Тур: {case.title}" + (" (нозик — фақат сиз кўрасиз)" if case.privacy == "sensitive" else ""),
         f"Кимдан: {requester.full_name}, {requester.position} ({requester.department})",
     ]
@@ -24,8 +24,8 @@ def case_card(case: HRCase, requester: Employee, about: Employee | None) -> str:
 
 
 def case_buttons(case: HRCase):  # noqa: ANN201
-    return inline([[("✅ Қабул қилдим", CaseActCb(action="take", number=case.number)),
-                    ("✍️ Жавоб / қарор", CaseActCb(action="answer", number=case.number))]])
+    return inline([[("Қабул қилдим", CaseActCb(action="take", number=case.number)),
+                    ("Жавоб / қарор", CaseActCb(action="answer", number=case.number))]])
 
 
 async def tell_case_handler(bot: Bot, session: AsyncSession, case: HRCase) -> bool:
@@ -39,13 +39,13 @@ async def tell_case_handler(bot: Bot, session: AsyncSession, case: HRCase) -> bo
 
 async def tell_step_acceptor(bot: Bot, acceptor: Employee, owner: Employee, step: OnboardingStep) -> bool:
     text = (
-        f"🧭 Мослашув: {owner.full_name} ({owner.position}) «{step.title}» қадамини бажардим деб юборди.\n\n"
+        f"Мослашув: {owner.full_name} ({owner.position}) «{step.title}» қадамини бажардим деб юборди.\n\n"
         f"Натижа: {step.proof_text or '(файл илова қилинган)'}\n\n"
         "Қабул қиласизми? Қайтарсангиз, сабабини ёзасиз."
     )
     ok = await notify(bot, acceptor, text, inline([[
-        ("✅ Қабул", StepCb(action="ok", step_id=step.id)),
-        ("↩️ Қайтариш", StepCb(action="back", step_id=step.id)),
+        ("Қабул қилиш", StepCb(action="ok", step_id=step.id)),
+        ("Қайтариш", StepCb(action="back", step_id=step.id)),
     ]]))
     if ok:
         await send_proof(bot, acceptor, step.proof_file_id)

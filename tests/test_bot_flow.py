@@ -20,6 +20,7 @@ from hari.bot import common
 from hari.main import build_dispatcher
 
 _ids = itertools.count(1)
+EMOJI = re.compile("[🌀-🫿☀-➿←-⇿⬀-⯿ℹ️]")
 
 
 class FakeSession(BaseSession):
@@ -109,7 +110,7 @@ async def test_stranger_gets_no_rights_and_sees_own_id(h):
 
 async def test_full_onboarding_journey(h):
     # HR fills the card step by step
-    await h.say(HR, "➕ Янги ходим")
+    await h.say(HR, "➕ Янги ходим")  # the old emoji menu button still works
     await h.say(HR, "Янгиев Ботир Акмалович")
     await h.say(HR, "Garmin сотув")
     await h.say(HR, "Сотувчи")
@@ -118,7 +119,7 @@ async def test_full_onboarding_journey(h):
     await h.press(HR, btn(h, HR, "Устозов Анвар"))  # mentor
     await h.say(HR, "бугун")
     await h.press(HR, btn(h, HR, "Ўзбек (кирилл)"))
-    replies = await h.press(HR, btn(h, HR, "✅ Сақлаш"))
+    replies = await h.press(HR, btn(h, HR, "Сақлаш"))
     link = re.search(r"https://t\.me/mgmHaribot\?start=(\S+)", replies[-1])
     assert link, replies
 
@@ -128,10 +129,10 @@ async def test_full_onboarding_journey(h):
     assert "ишламайди" in (await h.say(STRANGER, f"/start {link.group(1)}"))[0]  # one-time
 
     # the plan, a read step, and a task step needing the mentor
-    replies = await h.say(NEW, "📋 Режам")
+    replies = await h.say(NEW, "📋 Режам")  # old menu button
     assert "Мослашув режаси — 0/" in replies[0]
-    await h.press(NEW, btn(h, NEW, "📖 Танишдим"))
-    replies = await h.press(NEW, btn(h, NEW, "✅ Бажардим"))
+    await h.press(NEW, btn(h, NEW, "Танишдим"))
+    replies = await h.press(NEW, btn(h, NEW, "Бажардим"))
     assert "натижани юборинг" in replies[0]
     replies = await h.say(NEW, "Мураббий билан учрашдим, режа келишилди")
     assert "мураббийга юборилди" in replies[-1]
@@ -139,30 +140,39 @@ async def test_full_onboarding_journey(h):
 
     # nobody but the mentor (or HR) can accept; the mentor accepts
     assert h.buttons(MENTOR)
-    accept = btn(h, MENTOR, "✅ Қабул")
+    accept = btn(h, MENTOR, "Қабул")
     await h.press(STRANGER, accept)
     assert not any("қабул қилинди" in t for t in h.to(NEW))
     await h.press(MENTOR, accept)
     assert any("қадами қабул қилинди" in t for t in h.to(NEW))
-    assert "Мослашув режаси — 2/" in (await h.say(NEW, "📋 Режам"))[0]  # one read + the accepted meeting
+    assert "Мослашув режаси — 2/" in (await h.say(NEW, "Режам"))[0]  # one read + the accepted meeting
 
     # a question HARI has no source for: no guessing, offers a person
     replies = await h.say(NEW, "Офисда автомобиль парковкаси борми?")
     assert "тасдиқланган жавоб топилмади" in replies[0]
-    replies = await h.press(NEW, btn(h, NEW, "📨 HR масъулига юбориш"))
+    replies = await h.press(NEW, btn(h, NEW, "HR масъулига юбориш"))
     assert "Мурожаат қабул қилинди: HR-" in replies[-1]
     number = re.search(r"HR-\d{4}-\d{2}-\d{4}", replies[-1]).group(0)
     assert number in h.to(HR)[-1] and "парковкаси" in h.to(HR)[-1]
 
     # HR answers and closes; the newcomer gets the answer
-    await h.press(HR, btn(h, HR, "✍️ Жавоб"))
+    await h.press(HR, btn(h, HR, "Жавоб"))
     await h.say(HR, "Ҳа, ҳовлида 10 та жой бор.")
-    await h.press(HR, btn(h, HR, "✅ Ҳа, ёпиш"))
+    await h.press(HR, btn(h, HR, "Ҳа, ёпиш"))
     assert "10 та жой" in h.to(NEW)[-1] and "ёпилди" in h.to(NEW)[-1]
 
     # the salary question never goes to search or AI
     replies = await h.say(NEW, "Устозов Анварнинг маоши қанча?")
     assert "бошқа ходимларники эса умуман очилмайди" in replies[0]
+
+    # emoji only where it means something: status marks, an urgent alert, the 👍/👎 buttons
+    allowed = set("✅⏳↩⚠") | {"️"}
+    for _, text, markup in h.session.sent:
+        used = {ch for ch in text if EMOJI.match(ch)}
+        assert used <= allowed, (used, text[:80])
+        for row in getattr(markup, "inline_keyboard", None) or []:
+            for b in row:
+                assert {ch for ch in b.text if EMOJI.match(ch)} <= allowed | {"👍", "👎"}, b.text
 
 
 async def test_replayed_update_is_handled_once(h):

@@ -47,27 +47,27 @@ def _plan_text(emp: Employee, plan, today) -> tuple[str, list]:  # noqa: ANN001
     from hari.worktime import work_days_between
 
     elapsed = work_days_between(emp, plan.started_on, today)
-    lines = [f"📋 Мослашув режаси — {done}/{total} қадам қабул қилинган", f"Бошланган: {plan.started_on:%d.%m.%Y}"]
+    lines = [f"Мослашув режаси — {done}/{total} қадам қабул қилинган", f"Бошланган: {plan.started_on:%d.%m.%Y}"]
     phase = None
     for s in plan.steps:
         if s.phase != phase:
             phase = s.phase
             lines.append(f"\n{O.PHASE_LABELS.get(phase, phase)}")
-        icon = T.STEP_ICONS.get(s.status, "▫️") if s.day_offset <= elapsed or s.status != "pending" else T.STEP_ICON_FUTURE
+        icon = T.STEP_ICONS.get(s.status, "•") if s.day_offset <= elapsed or s.status != "pending" else T.STEP_ICON_FUTURE
         lines.append(f"{icon} {s.title} — {T.KIND_LABELS[s.kind]}, қабул: {T.ACCEPTOR_LABELS[s.acceptor]}")
         if s.status == "returned" and s.return_reason:
-            lines.append(f"   ↩️ {s.return_reason}")
+            lines.append(f"   Сабаб: {s.return_reason}")
     buttons = []
     for s in plan.steps:
         if s.id not in due:
             continue
         if s.kind == "read":
-            row = [(f"📖 Танишдим: {s.title}", StepCb(action="ack", step_id=s.id))]
+            row = [(f"Танишдим: {s.title}", StepCb(action="ack", step_id=s.id))]
             if s.doc_id:
-                row.insert(0, ("📄 Ўқиш", DocCb(doc_id=s.doc_id)))
+                row.insert(0, ("Ўқиш", DocCb(doc_id=s.doc_id)))
             buttons.append(row)
         else:
-            buttons.append([(f"✅ Бажардим: {s.title}", StepCb(action="done", step_id=s.id))])
+            buttons.append([(f"Бажардим: {s.title}", StepCb(action="done", step_id=s.id))])
     if due:
         lines.append("\nБугунги очиқ қадамлар пастда.")
     return "\n".join(lines), buttons
@@ -84,7 +84,7 @@ async def show_plan(message: Message, state: FSMContext) -> None:
         plan = await O.get_plan(session, emp.id)
         if plan is None:
             await message.answer(T.say(emp, "Сизга ҳали мослашув режаси бириктирилмаган. Керак бўлса, "
-                                            "«📝 Мурожаат» орқали HRдан сўранг."))
+                                            "«Мурожаат» орқали HRдан сўранг."))
             return
         text, buttons = _plan_text(emp, plan, today_local())
     await message.answer(T.say(emp, text), reply_markup=inline(
@@ -125,8 +125,8 @@ async def ack_step(query: CallbackQuery, callback_data: StepCb) -> None:
             return
         plan = await O.get_plan(session, emp.id)
         finished = plan is not None and plan.status == "done"
-    await query.answer(T.say(emp, "Қайд этилди ✅"))
-    await query.message.answer(T.say(emp, f"✅ «{step.title}» — танишганингиз қайд этилди."))
+    await query.answer(T.say(emp, "Қайд этилди"))
+    await query.message.answer(T.say(emp, f"«{step.title}» — танишганингиз қайд этилди."))
     if finished:
         await query.message.answer(T.say(emp, T.PLAN_DONE))
 
@@ -219,7 +219,7 @@ async def _open_and_tell(message: Message, bot: Bot, telegram_user_id: int, case
             await tell_case_handler(bot, session, case)
             if assignee is None:  # nobody holds the role: HR / owner must still see it
                 for hr in await _any_hr(session):
-                    await notify(bot, hr, f"⚠️ {case.number} учун масъул топилмади. «📥 Иш навбати»да кўринг.")
+                    await notify(bot, hr, f"⚠️ {case.number} учун масъул топилмади. «Иш навбати»да кўринг.")
     who = f"{assignee.full_name} ({assignee.position})" if assignee else T.CASE_UNASSIGNED
     await message.answer(T.say(emp, T.CASE_OPENED.format(
         number=case.number, label=case.title, who=who, due=fmt(case.first_response_due))))
@@ -244,7 +244,7 @@ async def offered_case(query: CallbackQuery, callback_data: OfferCaseCb, state: 
     question = data.get("last_question")
     await query.answer()
     if not question:
-        await query.message.answer("Саволни қайта ёзинг ёки «📝 Мурожаат» менюсидан фойдаланинг.")
+        await query.message.answer("Саволни қайта ёзинг ёки «Мурожаат» менюсидан фойдаланинг.")
         return
     await state.update_data(last_question=None)
     await query.message.edit_reply_markup(reply_markup=None)
@@ -265,7 +265,7 @@ async def my_cases(message: Message, state: FSMContext) -> None:
         return
     labels = {"submitted": "юборилди", "accepted": "кўриб чиқилмоқда", "in_review": "кўриб чиқилмоқда",
               "decided": "жавоб берилди, иш очиқ", "closed": "ёпилди", "rejected": "рад этилди"}
-    lines = ["📂 Мурожаатларингиз:"]
+    lines = ["Мурожаатларингиз:"]
     for c in rows:
         lines.append(f"\n{c.number} — {c.title}\nҲолат: {labels.get(c.status, c.status)}")
         if c.decision:
@@ -287,7 +287,7 @@ async def profile(message: Message, state: FSMContext) -> None:
         mentor = await session.get(Employee, emp.mentor_id) if emp.mentor_id else None
     lang = {"uz_cyrl": "ўзбек (кирилл)", "uz_latn": "ўзбек (лотин)", "ru": "рус"}[emp.language]
     lines = [
-        f"👤 {emp.full_name}", f"ID: {emp.code}", f"Бўлим: {emp.department}", f"Лавозим: {emp.position}",
+        f"{emp.full_name}", f"ID: {emp.code}", f"Бўлим: {emp.department}", f"Лавозим: {emp.position}",
         f"Раҳбар: {manager.full_name if manager else '—'}", f"Мураббий: {mentor.full_name if mentor else '—'}",
         f"Бошлаш санаси: {emp.start_date:%d.%m.%Y}" if emp.start_date else "Бошлаш санаси: —",
         f"Иш вақти: {emp.work_start_hour}:00–{emp.work_end_hour}:00", f"Тил: {lang}", "",
@@ -295,7 +295,7 @@ async def profile(message: Message, state: FSMContext) -> None:
     ]
     text = "\n".join(lines)
     await message.answer(T.say(emp, text), reply_markup=inline([
-        [(T.say(emp, "✏️ Хатони тузатиш"), CaseTypeCb(slug="data_fix"))],
+        [(T.say(emp, "Хатони тузатиш"), CaseTypeCb(slug="data_fix"))],
         [("Ўзбек (кирилл)", PickCb(field="mylang", value="uz_cyrl")),
          ("O'zbek (lotin)", PickCb(field="mylang", value="uz_latn")),
          ("Русский", PickCb(field="mylang", value="ru"))],
@@ -340,7 +340,7 @@ async def question(message: Message, state: FSMContext, bot: Bot) -> None:
     buttons = []
     if result.offer_case:
         await state.update_data(last_question=message.text)
-        label = "📨 HR масъулига юбориш" if result.offer_case == "question" else "📨 Мурожаат очиш"
+        label = "HR масъулига юбориш" if result.offer_case == "question" else "Мурожаат очиш"
         buttons.append([(T.say(emp, label), OfferCaseCb(slug=result.offer_case))])
     if result.outcome == "answered" and result.log_id:
         buttons.append([("👍 Тушунарли", HelpfulCb(log_id=result.log_id, ok=True)),
