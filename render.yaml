@@ -1,0 +1,60 @@
+# Render Blueprint for HARI — Render → New → Blueprint → pick the emjiemai/hari repository.
+#
+# Creates:
+#   hari-db  PostgreSQL 16 (basic-256mb, paid: a free database is deleted after 30 days)
+#   hari     web service (starter, paid, always on). Telegram posts updates to it (webhook);
+#            the reminder timers run inside it. A free web service sleeps after 15 minutes
+#            without traffic, and while asleep no reminder or escalation is sent — so not free.
+#
+# Region: Frankfurt, the closest Render region to Tashkent. It cannot be changed after
+# creation; the database and the service must be in the same region.
+#
+# Secrets marked `sync: false` are asked for once when the Blueprint is created and kept in
+# Render, never in this file. Spec §19 prefers a server in Uzbekistan for HR data — running on
+# Render is the owner's decision (same as МИЯ).
+
+databases:
+  - name: hari-db
+    databaseName: hari
+    user: hari
+    plan: basic-256mb
+    region: frankfurt
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: hari
+    runtime: python
+    plan: starter
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m hari.main
+    healthCheckPath: /health
+    autoDeploy: true  # every push to main deploys
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: BOT_MODE
+        value: webhook
+      - key: LOG_FILE
+        value: ""  # Render keeps stdout logs; its disk is wiped on every deploy
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hari-db
+          property: connectionString
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: KNOWLEDGE_DIR
+        value: knowledge/samples  # switch to knowledge/docs when the real documents are in
+      - key: LLM_MODEL
+        value: google/gemini-3.8-flash
+      - key: LLM_FALLBACK_MODELS
+        value: google/gemini-3.7-flash
+      - key: PROACTIVE_DAILY_LIMIT
+        value: "2"
+      - key: HARI_PAUSED
+        value: "false"  # emergency stop: set to true in Render → Environment

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -16,7 +17,14 @@ from hari.knowledge.loader import load_directory
 
 @pytest.fixture(autouse=True)
 async def database():
-    db.configure("sqlite+aiosqlite:///:memory:")
+    # HARI_TEST_DATABASE_URL=postgresql://… runs the same tests on PostgreSQL (what Render uses).
+    url = os.environ.get("HARI_TEST_DATABASE_URL")
+    engine = db.configure(url or "sqlite+aiosqlite:///:memory:")
+    if url:
+        from hari.db.models import Base
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
     await db.create_schema()
     yield
     await db.dispose()

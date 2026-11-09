@@ -34,7 +34,7 @@ cp .env.example .env                                        # then fill TELEGRAM
 .venv/Scripts/python -m hari.main
 ```
 
-The database creates itself (SQLite file `hari.db` locally; set `DATABASE_URL=postgresql+asyncpg://…` for production).
+The database creates itself (SQLite file `hari.db` locally; PostgreSQL on Render — see below).
 Knowledge files load at every start; a changed file replaces its old version, a removed one is retired.
 
 **First HR / owner account** (nobody exists yet to invite them). The person writes `/start` to the bot, which shows
@@ -46,15 +46,40 @@ their Telegram ID. Then:
 
 Everyone else: HR presses **➕ Янги ходим**, hands the link to the person privately, and they open it themselves.
 
+## Hosting on Render
+
+`render.yaml` is a Render Blueprint: a PostgreSQL 16 database (`hari-db`, basic-256mb) and an always-on web service
+(`hari`, starter), both in Frankfurt (closest to Tashkent). About $13 a month together. Free plans don't fit: a free
+web service sleeps after 15 minutes, and asleep it sends no reminders; a free database is deleted after 30 days.
+
+1. Render → **New → Blueprint** → connect GitHub → pick **emjiemai/hari** → Apply.
+2. It asks for the two secrets: `TELEGRAM_BOT_TOKEN` and `OPENROUTER_API_KEY` (the key can stay empty for now).
+3. The first deploy builds, starts, and registers the webhook with Telegram by itself.
+   Check: open `https://<service>.onrender.com/health` → `{"status": "ok"}`.
+4. First HR account: Render → `hari` → **Shell**, then
+   `python -m scripts.add_staff --tg <ID> --name "…" --role hr`.
+
+How it runs there (`BOT_MODE=webhook`): HARI listens on Render's `$PORT`. Telegram posts each update to
+`/telegram/webhook`; a request without the right secret header is refused (401). Render checks `/health`, which
+also checks the database. The reminder timers run inside the same service. Every push to `main` deploys
+(`autoDeploy`); the schema creates missing tables on start. Logs: Render → `hari` → Logs. Emergency stop: set
+`HARI_PAUSED=true` under Environment.
+
+**One token, one place.** While Render serves the bot, a local `python -m hari.main` refuses to start (it would take
+the bot away from Render). Use a second test bot from @BotFather in your local `.env`. To move the main token back to
+your PC: suspend the Render service, then `python -m scripts.unset_webhook`.
+
 ## Tests
 
 ```bash
-.venv/Scripts/python -m pytest -q          # 54 tests, no network
+.venv/Scripts/python -m pytest -q          # 57 tests, no network
 .venv/Scripts/python -m pyflakes hari tests scripts
 ```
 
 They cover A01, A02, A03, A04, A06, A07, A09, A12 and A13, plus an end-to-end run of the real dispatcher with a fake
-Telegram connection (HR adds someone → link → plan → proof → mentor accepts → question → HR request → answer).
+Telegram connection (HR adds someone → link → plan → proof → mentor accepts → question → HR request → answer), and the
+Render web server (health check, webhook secret). The same tests run on PostgreSQL with
+`HARI_TEST_DATABASE_URL=postgresql://…` set.
 
 ## Knowledge documents
 
@@ -85,6 +110,8 @@ hari/
   scheduler.py       reminders, escalation, reliable sending (§10)
   bot/               Telegram handlers, texts, keyboards
 scripts/add_staff.py first HR / owner account
+scripts/unset_webhook.py  move the bot token back to polling (local PC)
+render.yaml          Render Blueprint (database + web service)
 knowledge/           samples/ (for now) and docs/ (real documents)
 tests/
 ```
@@ -97,5 +124,6 @@ tests/
 - **Weeks 13–16:** vacancies, candidates, calendar, interview packet (§6–7).
 - **Before the pilot:** real approved SOPs; the 150 scenarios as an automated test set (§13, §28); PostgreSQL on a
   server in Uzbekistan and masking personal data before the AI (§19 — needs the lawyer's check of the AI provider);
-  approvals with action hash for role changes (§2); webhooks instead of polling; Russian fixed texts;
+  approvals with action hash for role changes (§2); open forms kept in the database instead of memory (a
+  restart now drops a half-filled form); database migrations for later schema changes; Russian fixed texts;
   revoke and reissue the bot token (it was shared in a chat).
