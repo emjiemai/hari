@@ -248,7 +248,7 @@ async def on_button(query: CallbackQuery, callback_data: ApplyCb, bot: Bot) -> N
 
 # --------------------------------------------------------------------------- typed answers, files
 
-@router.message(Applicant(submitted_too=True))
+@router.message(~F.text.startswith("/"), Applicant(submitted_too=True))  # commands pass through
 async def on_message(message: Message, bot: Bot, app_id: str) -> None:
     async with session_scope() as session:
         app = await session.get(Application, app_id)

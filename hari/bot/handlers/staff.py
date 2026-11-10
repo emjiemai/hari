@@ -20,7 +20,10 @@ from hari.config import settings
 from hari.bot.common import invite_link, staff_by_tg
 from hari.bot.notifications import case_buttons, case_card
 from hari.bot.ui import CaseActCb, PickCb, StepCb, inline, notify
-from hari.db.models import Employee, OnboardingPlan, OnboardingStep
+from hari.apply.applications import mark_hired
+from hari.apply.report import tell_applicant
+from hari.apply.texts import t as apply_text
+from hari.db.models import Application, Employee, OnboardingPlan, OnboardingStep
 from hari.db.session import session_scope
 from hari.employees import CardError, CardInput, create_card, list_staff, make_invite
 from hari.worktime import today_local
@@ -87,6 +90,9 @@ async def ne_name(message: Message, state: FSMContext) -> None:
 @router.message(NewEmp.department, F.text)
 async def ne_dept(message: Message, state: FSMContext) -> None:
     await state.update_data(department=message.text.strip())
+    if (await state.get_data()).get("position"):  # a card from an application already knows the position
+        await ask_role(message, state, message.from_user.id)
+        return
     await state.set_state(NewEmp.position)
     await message.answer("3/8. Лавозим:")
 
@@ -94,12 +100,34 @@ async def ne_dept(message: Message, state: FSMContext) -> None:
 @router.message(NewEmp.position, F.text)
 async def ne_position(message: Message, state: FSMContext) -> None:
     await state.update_data(position=message.text.strip())
+    await ask_role(message, state, message.from_user.id)
+
+
+async def ask_role(message: Message, state: FSMContext, hr_tg: int, intro: str = "") -> None:
     await state.set_state(NewEmp.role)
     async with session_scope() as session:
-        hr = await _hr(message, session)
+        hr = await staff_by_tg(session, hr_tg)
     roles = [r for r in ROLE_LABELS if r != "owner" or (hr and hr.role == "owner")]
     rows = [[(ROLE_LABELS[r], PickCb(field="role", value=r)) for r in roles[i:i + 3]] for i in range(0, len(roles), 3)]
-    await message.answer("4/8. HARIдаги роли (ҳуқуқлар шундан келиб чиқади):", reply_markup=inline(rows))
+    await message.answer(intro + "4/8. HARIдаги роли (ҳуқуқлар шундан келиб чиқади):", reply_markup=inline(rows))
+
+
+async def start_card_from_application(message: Message, state: FSMContext, hr_tg: int, app_id: str,
+                                      full_name: str, department: str, position: str, language: str) -> None:
+    """«Ишга олиш» on a report: the usual card, with what the application already knows filled in."""
+    await state.clear()
+    await state.update_data(from_application=app_id, full_name=full_name, department=department,
+                            position=position, language=language)
+    intro = (f"Номзоддан карточка: {full_name}, {position or 'лавозим кўрсатилмаган'}.\n"
+             "Ҳар қадамда /bekor — бекор қилиш.\n\n")
+    if not department:
+        await state.set_state(NewEmp.department)
+        await message.answer(intro + "2/8. Бўлим (масалан: Garmin сотув, Londry, Бухгалтерия):")
+    elif not position:
+        await state.set_state(NewEmp.position)
+        await message.answer(intro + "3/8. Лавозим:")
+    else:
+        await ask_role(message, state, hr_tg, intro)
 
 
 async def _people_buttons(field: str) -> list:
@@ -183,8 +211,12 @@ async def ne_lang(query: CallbackQuery, callback_data: PickCb, state: FSMContext
     await query.answer()
 
 
+class _AlreadyDecided(Exception):
+    """Someone decided on the application while this card was being filled: undo the card."""
+
+
 @router.callback_query(NewEmp.confirm, PickCb.filter(F.field == "confirm"))
-async def ne_confirm(query: CallbackQuery, callback_data: PickCb, state: FSMContext) -> None:
+async def ne_confirm(query: CallbackQuery, callback_data: PickCb, state: FSMContext, bot: Bot) -> None:
     data = await state.get_data()
     await state.clear()
     await query.message.edit_reply_markup(reply_markup=None)
@@ -192,28 +224,43 @@ async def ne_confirm(query: CallbackQuery, callback_data: PickCb, state: FSMCont
     if callback_data.value != "yes":
         await query.message.answer(T.CANCELLED)
         return
-    async with session_scope() as session:
-        hr = await _hr(query, session)
-        if hr is None:
-            await query.message.answer(T.NOT_ALLOWED)
-            return
-        start = date.fromisoformat(data["start_date"])
-        try:
-            emp, created = await create_card(session, CardInput(
-                full_name=data["full_name"], department=data["department"], position=data["position"],
-                role=data["role"], manager_id=data.get("manager_id"), mentor_id=data.get("mentor_id"),
-                start_date=start, language=data["language"],
-            ), created_by=hr.id)
-        except CardError as exc:
-            await query.message.answer(f"Сақланмади: {exc}")
-            return
-        await O.create_plan(session, emp, start, actor_id=hr.id)
-        token = await make_invite(session, emp, created_by=hr.id)
+    app_id = data.get("from_application")
+    app = None
+    try:
+        async with session_scope() as session:
+            hr = await _hr(query, session)
+            if hr is None:
+                await query.message.answer(T.NOT_ALLOWED)
+                return
+            start = date.fromisoformat(data["start_date"])
+            try:
+                emp, created = await create_card(session, CardInput(
+                    full_name=data["full_name"], department=data["department"], position=data["position"],
+                    role=data["role"], manager_id=data.get("manager_id"), mentor_id=data.get("mentor_id"),
+                    start_date=start, language=data["language"],
+                ), created_by=hr.id)
+            except CardError as exc:
+                await query.message.answer(f"Сақланмади: {exc}")
+                return
+            if app_id:
+                if not await mark_hired(session, app_id, hr, emp.id):
+                    raise _AlreadyDecided  # leaving the session this way rolls the new card back
+                app = await session.get(Application, app_id)
+            await O.create_plan(session, emp, start, actor_id=hr.id)
+            token = await make_invite(session, emp, created_by=hr.id)
+    except _AlreadyDecided:
+        await query.message.answer("Сақланмади: бу номзод бўйича қарор аллақачон қабул қилинган.")
+        return
     head = "Карточка сақланди" if created else "Бу ходим аллақачон бор — янги карточка яратилмади"
+    link = invite_link(token)
+    tail = ("Ҳаволани ходимга шахсан беринг, умумий гуруҳга ташламанг. "
+            "У уни ўз Telegram аккаунтидан очиши керак.")
+    if app is not None and app.telegram_user_id:
+        sent = await tell_applicant(bot, app, apply_text(app.language, "msg_hire", link=link))
+        tail = "Ҳавола номзодга юборилди." if sent else "Ҳавола номзодга юборилмади — уни ўзингиз шахсан беринг."
     await query.message.answer(
         f"{head}: {emp.code} — {emp.full_name}.\nМослашув режаси тайёр.\n\n"
-        f"Шахсий ҳавола (бир марталик, {settings.invite_ttl_hours} соат):\n{invite_link(token)}\n\n"
-        "Ҳаволани ходимга шахсан беринг, умумий гуруҳга ташламанг. У уни ўз Telegram аккаунтидан очиши керак."
+        f"Шахсий ҳавола (бир марталик, {settings.invite_ttl_hours} соат):\n{link}\n\n{tail}"
     )
 
 

@@ -4,16 +4,19 @@ Every action re-checks the right on the server."""
 from __future__ import annotations
 
 from aiogram import Bot, F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
 from hari.access import can_manage_employees
 from hari.apply import applications as A
 from hari.apply.report import report_buttons, report_parts, send_to, tell_applicant, vacancy_title
 from hari.apply.texts import STATUS_LABELS, t
+from hari.apply.vacancies import title_for
 from hari.bot import texts as T
 from hari.bot.common import staff_by_tg
+from hari.bot.handlers import staff
 from hari.bot.ui import AppActCb
-from hari.db.models import Application, Employee
+from hari.db.models import Application, Employee, Vacancy
 from hari.db.session import session_scope
 
 router = Router(name="hiring")
@@ -62,3 +65,23 @@ async def show(query: CallbackQuery, callback_data: AppActCb, bot: Bot) -> None:
         parts = report_parts(app, await vacancy_title(session, app))
     await query.answer()
     await send_to(bot, actor, parts, report_buttons(app), app.resume_file_id)
+
+
+@router.callback_query(AppActCb.filter(F.action == "hire"))
+async def hire(query: CallbackQuery, callback_data: AppActCb, state: FSMContext) -> None:
+    async with session_scope() as session:
+        actor = await hiring_staff(session, query.from_user.id)
+        if actor is None:
+            await query.answer(T.NOT_ALLOWED, show_alert=True)
+            return
+        app = await session.get(Application, callback_data.app_id)
+        if app is None or not A.can_hire(app):
+            who = await session.get(Employee, app.decided_by) if app and app.decided_by else None
+            await query.answer(too_late(A.Decision(False, app.status if app else "missing",
+                                                   who.full_name if who else None)), show_alert=True)
+            return
+        vac = await session.get(Vacancy, app.vacancy_id) if app.vacancy_id else None
+        position = title_for(vac, "uz_cyrl") if vac else ""
+        details = (app.id, app.full_name, vac.department if vac else "", position, app.language)
+    await query.answer()
+    await staff.start_card_from_application(query.message, state, query.from_user.id, *details)
