@@ -9,11 +9,13 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hari.apply import evaluate as E
 from hari.apply.evaluate import VERDICTS
 from hari.apply.texts import BTN_HIRE, BTN_INTERVIEW, BTN_REJECT, LANG_NAMES, NO_AI, STATUS_LABELS
 from hari.apply.vacancies import title_for
 from hari.bot.ui import AppActCb, inline, notify, send_proof
 from hari.db.models import Application, Employee, Vacancy
+from hari.db.session import session_scope
 from hari.worktime import now_utc
 
 PART_LIMIT = 4000  # Telegram allows 4096 per message
@@ -125,3 +127,19 @@ async def tell_applicant(bot: Bot, app: Application, text: str) -> bool:
     except TelegramAPIError as exc:
         logger.warning("Message to applicant {} not delivered: {}", app.number, type(exc).__name__)
         return False
+
+
+async def evaluate_and_report(bot: Bot, app_id: str) -> int:
+    """HARI's view (outside any session: the AI may take seconds), then the report to owners and HR.
+    Used when an applicant finishes, and by the timer for a report that never went out."""
+    async with session_scope() as session:
+        app = await session.get(Application, app_id)
+        vac = await session.get(Vacancy, app.vacancy_id) if app.vacancy_id else None
+        needs_view = app.verdict is None
+    evaluation = await E.evaluate(app, vac) if needs_view else None
+    async with session_scope() as session:
+        app = await session.get(Application, app_id)
+        if evaluation is not None:
+            app.verdict, app.reason = evaluation.verdict, evaluation.reason
+            app.answer_notes, app.ai_model = evaluation.notes, evaluation.model
+        return await send_report(bot, session, app)

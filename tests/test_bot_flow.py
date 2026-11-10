@@ -27,6 +27,7 @@ class FakeSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
         self.sent: list[tuple[int, str, object]] = []
+        self.alerts: list[str] = []  # texts of callback answers (pop-ups)
 
     async def close(self) -> None:
         return None
@@ -41,6 +42,8 @@ class FakeSession(BaseSession):
                            chat=Chat(id=int(method.chat_id), type="private"), text=method.text)
         if isinstance(method, GetMe):
             return User(id=1, is_bot=True, first_name="HARI", username="mgmHaribot")
+        if isinstance(method, AnswerCallbackQuery) and method.text:
+            self.alerts.append(method.text)
         if isinstance(method, (AnswerCallbackQuery, SendChatAction, EditMessageReplyMarkup, EditMessageText)):
             return True
         return True

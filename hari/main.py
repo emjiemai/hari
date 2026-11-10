@@ -22,7 +22,7 @@ from loguru import logger
 from hari import scheduler
 from hari.apply.vacancies import seed_vacancies
 from hari.bot import common
-from hari.bot.handlers import apply, employee, staff, start
+from hari.bot.handlers import apply, employee, hiring, staff, start
 from hari.bot.middleware import DedupeMiddleware
 from hari.config import WEBHOOK_PATH, settings
 from hari.db.session import create_schema, ping, session_scope
@@ -41,6 +41,7 @@ def build_dispatcher() -> Dispatcher:
         dp.include_router(apply.router)  # first: applicants; its filters pass staff and strangers through
         dp.include_router(start.router)
         dp.include_router(staff.router)
+        dp.include_router(hiring.router)
         dp.include_router(employee.router)  # last: its catch-all answers questions
         _dispatcher = dp
     return _dispatcher

@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hari import onboarding as O
 from hari.bot import texts as T
 from hari.config import settings
-from hari.db.models import Employee, HRCase, OnboardingPlan, OutboundMessage, as_utc
+from hari.db.models import Application, Employee, HRCase, OnboardingPlan, OutboundMessage, as_utc
 from hari.db.session import session_scope
 from hari.worktime import fmt, is_work_time, local, now_utc, today_local
 
@@ -143,6 +143,15 @@ async def pending_retries(session: AsyncSession, now: datetime) -> list[str]:
             and as_utc(m.created_at) > now - timedelta(hours=6)]
 
 
+async def unreported(session: AsyncSession, now: datetime) -> list[str]:
+    """Finished applications whose report never went out (a crash or deploy right after the last answer).
+    Two minutes' grace: the applicant's own flow is still sending a fresh one."""
+    rows = (await session.execute(select(Application).where(
+        Application.status == "submitted", Application.reported_at.is_(None),
+        Application.telegram_user_id.is_not(None)))).scalars().all()
+    return [a.id for a in rows if a.submitted_at and as_utc(a.submitted_at) < now - timedelta(minutes=2)]
+
+
 async def tick(bot: Bot, now: datetime | None = None) -> int:
     if settings.hari_paused:
         return 0
@@ -152,9 +161,14 @@ async def tick(bot: Bot, now: datetime | None = None) -> int:
         ids = await pending_retries(session, now)
         ids += await onboarding_nudges(session, now)
         ids += await case_escalations(session, now)
+        reports = await unreported(session, now)
     sent = 0
     for msg_id in ids:
         sent += await deliver(bot, msg_id)
+    from hari.apply.report import evaluate_and_report  # here: the report module imports the bot UI
+
+    for app_id in reports:
+        sent += bool(await evaluate_and_report(bot, app_id))
     return sent
 
 

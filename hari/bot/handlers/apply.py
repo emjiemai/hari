@@ -20,7 +20,7 @@ from loguru import logger
 from hari.apply import applications as A
 from hari.apply import evaluate as E
 from hari.apply.logic_bank import by_id, option_labels, question_text
-from hari.apply.report import send_report
+from hari.apply.report import evaluate_and_report
 from hari.apply.texts import LANG_BUTTONS, t
 from hari.apply.vacancies import list_open, title_for
 from hari.bot.common import handles_work, staff_by_tg
@@ -310,20 +310,6 @@ async def on_message(message: Message, bot: Bot, app_id: str) -> None:
         finished = app.status == "submitted"
     if finished:
         await message.answer(t(lang, "thanks", days=settings.apply_reply_days))
-        await finish(bot, app_id)
+        await evaluate_and_report(bot, app_id)
         return
     await show_step(message, bot, app_id, before)
-
-
-async def finish(bot: Bot, app_id: str) -> None:
-    """HARI's view (outside any session: the AI may take seconds), then the report to owners and HR."""
-    async with session_scope() as session:
-        app = await session.get(Application, app_id)
-        vac = await session.get(Vacancy, app.vacancy_id) if app.vacancy_id else None
-    evaluation = await E.evaluate(app, vac)
-    async with session_scope() as session:
-        app = await session.get(Application, app_id)
-        if evaluation is not None:
-            app.verdict, app.reason = evaluation.verdict, evaluation.reason
-            app.answer_notes, app.ai_model = evaluation.notes, evaluation.model
-        await send_report(bot, session, app)
