@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     # Log file next to stdout. Empty = stdout only (Render keeps stdout logs; its disk is temporary).
     log_file: str = "logs/hari.log"
 
+    # Telegram IDs that are always owners (comma-separated). Set in Render → Environment; no shell needed.
+    hari_owners: str = ""
+    # "We reply within N working days" — told to applicants when they finish
+    apply_reply_days: int = 3
+
+    @property
+    def owner_ids(self) -> list[int]:
+        return [int(p) for p in (x.strip() for x in self.hari_owners.split(",")) if p.isdigit()]
+
     @property
     def llm_models(self) -> list[str]:
         extra = [m.strip() for m in self.llm_fallback_models.split(",") if m.strip()]

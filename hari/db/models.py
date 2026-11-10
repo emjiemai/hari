@@ -10,7 +10,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 from sqlalchemy import (
-    BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint,
+    JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -278,3 +278,76 @@ class AnswerLog(Base):
     model: Mapped[str | None] = mapped_column(String(80), nullable=True)
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     was_helpful: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
+# --------------------------------------------------------------------------- hiring
+
+APPLICATION_STATUSES = ("draft", "submitted", "interview", "rejected", "hired")
+
+
+class Vacancy(Base):
+    """An open position. Titles are public (the hiring pages show them); the rest is for HARI and staff only."""
+
+    __tablename__ = "vacancies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    key: Mapped[str] = mapped_column(String(40), unique=True)
+    title: Mapped[str] = mapped_column(String(200))  # Uzbek Cyrillic; Latin by transliteration
+    title_ru: Mapped[str] = mapped_column(String(200), default="")
+    title_en: Mapped[str] = mapped_column(String(200), default="")
+    department: Mapped[str] = mapped_column(String(100), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    look_for: Mapped[str] = mapped_column(Text, default="")  # what makes a strong applicant; never public
+    question_1: Mapped[str] = mapped_column(Text, default="")
+    question_2: Mapped[str] = mapped_column(Text, default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=100)
+    status: Mapped[str] = mapped_column(String(10), default="open")  # open | closed
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Application(Base):
+    """A job application. Progress lives here (`step`), so a restart mid-way loses nothing.
+    Applicants are never employees: no row in `employees` until someone is hired."""
+
+    __tablename__ = "applications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    number: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)  # A-2026-11-0001
+    telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    language: Mapped[str] = mapped_column(String(10), default="uz_cyrl")
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    full_name: Mapped[str] = mapped_column(String(200), default="")
+    phone: Mapped[str] = mapped_column(String(20), default="")
+    vacancy_id: Mapped[str | None] = mapped_column(ForeignKey("vacancies.id"), nullable=True)
+    experience: Mapped[str] = mapped_column(Text, default="")
+    resume_file_id: Mapped[str | None] = mapped_column(String(300), nullable=True)  # "photo:<id>" | "document:<id>"
+    source: Mapped[str] = mapped_column(String(40), default="apply")
+    step: Mapped[str] = mapped_column(String(20), default="lang")
+    step_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    logic: Mapped[list] = mapped_column(JSON, default=list)  # [{"qid", "choice", "correct", "seconds"}]
+    job: Mapped[list] = mapped_column(JSON, default=list)  # [{"q", "a"}]
+    job_origin: Mapped[str] = mapped_column(String(10), default="")  # vacancy | ai | fallback
+    verdict: Mapped[str | None] = mapped_column(String(10), nullable=True)  # strong | maybe | weak
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answer_notes: Mapped[list] = mapped_column(JSON, default=list)
+    ai_model: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    employee_id: Mapped[str | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    vacancy: Mapped[Vacancy | None] = relationship(lazy="joined")
+
+
+class ApplicationCounter(Base):
+    __tablename__ = "application_counters"
+
+    period: Mapped[str] = mapped_column(String(7), primary_key=True)  # 2026-11
+    last: Mapped[int] = mapped_column(Integer, default=0)
