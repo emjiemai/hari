@@ -17,7 +17,9 @@ from hari.answer import answer_question
 from hari.bot import texts as T
 from hari.bot.common import handles_work, staff_by_tg
 from hari.bot.notifications import acceptor_label, tell_case_handler, tell_step_acceptor
-from hari.bot.ui import CaseTypeCb, DocCb, HelpfulCb, OfferCaseCb, PickCb, StepCb, inline, main_menu, notify
+from hari.bot.ui import (
+    CaseTypeCb, DocCb, HelpfulCb, OfferCaseCb, PickCb, StepCb, apply_button, inline, main_menu, notify,
+)
 from hari.db.models import AnswerLog, Employee, KnowledgeChunk, KnowledgeDocument
 from hari.db.session import session_scope
 from hari.knowledge.search import Hit
@@ -333,7 +335,7 @@ async def question(message: Message, state: FSMContext, bot: Bot) -> None:
     async with session_scope() as session:
         emp = await staff_by_tg(session, message.from_user.id)
         if emp is None:
-            await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id))
+            await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id), reply_markup=apply_button())
             return
         await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         result = await answer_question(session, emp, message.text, today_local())

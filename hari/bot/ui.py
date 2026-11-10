@@ -86,6 +86,11 @@ def main_menu(emp: Employee, handles_work: bool) -> ReplyKeyboardMarkup:
     )
 
 
+def apply_button() -> InlineKeyboardMarkup:
+    """Under the "not linked" reply: lets a job seeker who came without the link start an application."""
+    return inline([[(T.BTN_APPLY, ApplyCb(action="again", value=""))]])
+
+
 def inline(rows: list[list[tuple[str, CallbackData]]]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for row in rows:

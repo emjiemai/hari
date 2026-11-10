@@ -9,7 +9,7 @@ from aiogram.types import Message
 
 from hari.bot import texts as T
 from hari.bot.common import handles_work, staff_by_tg
-from hari.bot.ui import main_menu
+from hari.bot.ui import apply_button, main_menu
 from hari.db.models import Employee
 from hari.db.session import session_scope
 from hari.employees import BindError, bind_telegram
@@ -48,7 +48,7 @@ async def start_plain(message: Message, state: FSMContext) -> None:
         await claim_owner_name(session, user.id, user.first_name, user.last_name)
         emp = await staff_by_tg(session, user.id)
     if emp is None:
-        await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id))
+        await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id), reply_markup=apply_button())
         return
     await _welcome(message, emp)
 
