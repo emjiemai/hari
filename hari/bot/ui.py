@@ -41,6 +41,28 @@ class HelpfulCb(CallbackData, prefix="hf"):
     ok: bool
 
 
+class ApplyCb(CallbackData, prefix="ap"):
+    action: str  # lang | consent | vac | skip | logic ("{index}-{choice}") | again
+    value: str
+
+
+class AppActCb(CallbackData, prefix="aa"):
+    action: str  # interview | reject | hire | show
+    app_id: str
+
+
+class VacCb(CallbackData, prefix="vc"):
+    action: str  # open | new | close | reopen | edit | field
+    vac_id: str
+    field: str = ""
+
+
+class RoleCb(CallbackData, prefix="rl"):
+    action: str  # pick | person | set | ok | no
+    emp_id: str
+    role: str = ""
+
+
 class PickCb(CallbackData, prefix="pk"):
     field: str  # role | manager | mentor | lang | confirm | mylang
     value: str

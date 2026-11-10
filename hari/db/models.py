@@ -343,8 +343,6 @@ class Application(Base):
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    vacancy: Mapped[Vacancy | None] = relationship(lazy="joined")
-
 
 class ApplicationCounter(Base):
     __tablename__ = "application_counters"
