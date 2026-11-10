@@ -20,12 +20,14 @@ from aiohttp import web
 from loguru import logger
 
 from hari import scheduler
+from hari.apply.vacancies import seed_vacancies
 from hari.bot import common
 from hari.bot.handlers import employee, staff, start
 from hari.bot.middleware import DedupeMiddleware
 from hari.config import WEBHOOK_PATH, settings
 from hari.db.session import create_schema, ping, session_scope
 from hari.knowledge.loader import load_directory
+from hari.owners import ensure_owners
 
 _dispatcher: Dispatcher | None = None
 
@@ -47,6 +49,12 @@ async def prepare() -> None:
     await create_schema()
     async with session_scope() as session:
         result = await load_directory(session, settings.knowledge_dir)
+        added = await seed_vacancies(session)
+        owners = await ensure_owners(session, settings.owner_ids)
+    if added:
+        logger.info("Vacancies: loaded the {} starting vacancies", added)
+    if owners:
+        logger.info("Owners from HARI_OWNERS: {}", ", ".join(owners))
     logger.info("Knowledge: {} loaded, {} unchanged, {} refused, {} retired",
                 len(result.loaded), len(result.unchanged), len(result.refused), len(result.retired))
     for name, why in result.refused:

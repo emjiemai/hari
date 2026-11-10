@@ -13,6 +13,7 @@ from hari.bot.ui import main_menu
 from hari.db.models import Employee
 from hari.db.session import session_scope
 from hari.employees import BindError, bind_telegram
+from hari.owners import claim_owner_name
 
 router = Router(name="start")
 
@@ -43,7 +44,9 @@ async def start_with_token(message: Message, command: CommandObject, state: FSMC
 async def start_plain(message: Message, state: FSMContext) -> None:
     await state.clear()
     async with session_scope() as session:
-        emp = await staff_by_tg(session, message.from_user.id)
+        user = message.from_user
+        await claim_owner_name(session, user.id, user.first_name, user.last_name)
+        emp = await staff_by_tg(session, user.id)
     if emp is None:
         await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id))
         return
