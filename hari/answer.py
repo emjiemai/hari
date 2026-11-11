@@ -138,7 +138,7 @@ async def _answer(session: AsyncSession, emp: Employee, question: str, today: da
     if data.get("need_human") or not isinstance(text, str) or not text.strip():
         return Answer(NO_SOURCE_TEXT, "knowledge", "no_source", offer_case="question", model=reply.model)
     text = clean_model_text(text)
-    if not used or not is_polite(text) or leaks_secret(text):
+    if not used or not is_polite(text) or leaks_secret(text) or "{{" in text:
         # A model answer without a real source, or one that fails the checks, never goes out (spec §30).
         return Answer(fallback_text(hits), "knowledge", "fallback", sources=hits[:1], offer_case="question",
                       model=reply.model)
