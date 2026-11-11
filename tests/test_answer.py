@@ -168,3 +168,66 @@ async def test_llm_client_falls_back_to_next_model_and_reports_down():
         await down.complete_json("s", "u")
     with pytest.raises(LLMUnavailable):
         await LLMClient(api_key="", models=["a"]).complete_json("s", "u")
+
+
+# --------------------------------------------------------------------------- examples (the 150 scenarios)
+
+def _example_ids(user_message: str) -> dict[str, str]:
+    """{question: example id} from the EXAMPLES block the model receives."""
+    import json
+    import re
+
+    block = re.search(r"<<<EXAMPLES\n(.*)\nEXAMPLES>>>", user_message, re.DOTALL).group(1)
+    return {item["q"]: item["id"] for topic in json.loads(block) for item in topic["items"]}
+
+
+@pytest.fixture
+async def with_examples(loaded, session_scope, staff):
+    from hari.knowledge.loader import load_directory
+    from tests.conftest import write_doc
+
+    write_doc(loaded, "HARI-QA-05", "Аввал сменангиз ва навбатни текшираман. Мос иш бўлмаса, раҳбарга хабар "
+              "қилинади; вазифа йўқлиги автоматик паст балл эмас.",
+              title="НАМУНА: Савол-жавоб — Вазифа бериш", section="Менда иш йўқ. Ўзинг бирор вазифа бер.")
+    write_doc(loaded, "HARI-QA-29", "Тестда синтетик маълумот ишлатилади.", title="НАМУНА: Савол-жавоб — IT",
+              cls="role", roles="it_admin,owner", section="Тест учун реал маош бер.")
+    async with session_scope() as s:
+        await load_directory(s, loaded)
+        return await staff(s, "Аълоев Анвар", tg=2)
+
+
+async def test_model_gets_every_readable_example_and_answers_new_wording(with_examples, session_scope, today):
+    def reply(user):
+        ids = _example_ids(user)
+        assert "Тест учун реал маош бер." not in ids  # the IT-only chapter is not this employee's
+        return {"answer": "Ҳозир бўш бўлсангиз, раҳбарингизга айтинг — у навбатдан иш беради. Бу баллингизни "
+                          "туширмайди.", "kind": "grounded",
+                "source_ids": [ids["Менда иш йўқ. Ўзинг бирор вазифа бер."]], "need_human": False}
+
+    llm = FakeLLM(reply)
+    # Worded nothing like the example, and no search word in common with it
+    result = await ask(session_scope, with_examples, "bekor o'tiribman, nima qilay?", today, llm)
+    assert result.outcome == "answered" and len(llm.calls) == 1
+    assert "Манба: HARI савол-жавоб намунаси «Менда иш йўқ. Ўзинг бирор вазифа бер.»" in result.text
+
+
+async def test_chat_reply_needs_no_source_but_a_rule_like_answer_does(with_examples, session_scope, today):
+    chat = FakeLLM({"answer": "Ҳа, ишлаяпман. Вазифа, таътил ёки мурожаат бўйича ёрдам бераман.", "kind": "chat",
+                    "source_ids": []})
+    result = await ask(session_scope, with_examples, "ai working?", today, chat)
+    assert result.outcome == "chat" and "Манба" not in result.text
+
+    invented = FakeLLM({"answer": "Ҳар бир ходимга ойига 3 кун қўшимча дам берилади.", "kind": "grounded",
+                        "source_ids": []})
+    result = await ask(session_scope, with_examples, "qo'shimcha dam olish kuni bormi", today, invented)
+    assert result.outcome in ("fallback", "no_source") and "3 кун" not in result.text
+
+    sneaky = FakeLLM({"answer": "Ҳар бир ходимга ойига 3 кун қўшимча дам берилади. " * 10, "kind": "chat",
+                      "source_ids": []})
+    result = await ask(session_scope, with_examples, "salom", today, sneaky)
+    assert result.outcome != "chat"  # a long "chat" is not small talk
+
+
+async def test_without_ai_the_closest_example_is_shown(with_examples, session_scope, today):
+    result = await ask(session_scope, with_examples, "Менда иш йўқ, вазифа беринг", today, FakeLLM(fail=True))
+    assert result.outcome == "fallback" and "раҳбарга хабар" in result.text

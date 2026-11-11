@@ -68,11 +68,14 @@ async def allowed_chunks(session: AsyncSession, emp: Employee, today: date) -> l
     return [(c, readable[c.doc_id]) for c in chunks if c.doc_version == readable[c.doc_id].version]
 
 
-async def search(session: AsyncSession, emp: Employee, query: str, today: date, k: int = 4) -> list[Hit]:
+async def search(session: AsyncSession, emp: Employee, query: str, today: date, k: int = 4,
+                 skip_doc_prefix: str | None = None) -> list[Hit]:
     q_tokens = set(tokens(query))
     if not q_tokens:
         return []
     pool = await allowed_chunks(session, emp, today)
+    if skip_doc_prefix:
+        pool = [(c, d) for c, d in pool if not d.doc_id.startswith(skip_doc_prefix)]
     if not pool:
         return []
 
