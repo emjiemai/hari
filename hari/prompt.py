@@ -13,7 +13,7 @@ import json
 from hari.config import SPEC_VERSION
 from hari.db.models import Employee
 
-PROMPT_VERSION = "2.0.1"
+PROMPT_VERSION = "2.0.2"  # 2.0.2: recent turns of the chat, request offers instead of promised actions
 
 AGENT_PROMPT = """You are HARI, the authorized HR operations assistant for EMJIEM.
 Help the company maintain capable staff, reliable work, lawful processes, secure information and \

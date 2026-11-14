@@ -176,6 +176,31 @@ def match_rule(text: str) -> Rule | None:
     return None
 
 
+# A short "yes" to the request HARI just offered: "ha", "tasdiqlayman", "ha tayyorlab yubor", "да, отправь".
+# Every word of the reply must be one of these: a whole word, a filler, or a verb stem in a form
+# without the Uzbek negative "-ма-" ("юборинг" yes, "юборманг" no).
+_CONSENT_WORDS = {"ҳа", "ха", "хоп", "хўп", "майли", "ок", "окей", "окай", "рози", "розиман", "албатта",
+                  "илтимос", "шундай", "тўғри", "да", "давай", "конечно", "согласен", "согласна", "ес", "иес",
+                  "ага", "оч", "очинг", "открой", "откройте"}
+_CONSENT_STEMS = ("тасдиқла", "юбор", "тайёрла", "подтвержда", "отправ")
+_CONSENT_FILLERS = {"мен", "буни", "шуни", "уни", "ҳам", "пожалуйста", "ни", "ва", "энди", "енди"}
+_NEGATIONS = {"йўқ", "йуқ", "нет", "не", "керакмас", "эмас"}
+
+
+def _consent_word(word: str) -> bool:
+    if word in _CONSENT_WORDS or word in _CONSENT_FILLERS:
+        return True
+    return any(word.startswith(s) and not word[len(s):].startswith("ма") for s in _CONSENT_STEMS)
+
+
+def is_consent(text: str) -> bool:
+    """A short yes to the request HARI just offered (only then does the bot act on it)."""
+    words = normalize(text).split()
+    if not words or len(words) > 5 or any(w in _NEGATIONS for w in words):
+        return False
+    return all(_consent_word(w) for w in words)
+
+
 def reply_for(rule: Rule, language: str) -> str:
     """The approved reply in the person's language. Uzbek Latin is made from the Cyrillic text by the sender."""
     return rule.reply_ru if language == "ru" and rule.reply_ru else rule.reply
