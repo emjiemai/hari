@@ -21,9 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hari import onboarding as O
 from hari.bot import texts as T
 from hari.config import settings
-from hari.db.models import Application, Employee, HRCase, OnboardingPlan, OutboundMessage, as_utc
+from hari.db.models import Application, Employee, HRCase, OnboardingPlan, OutboundMessage, Vacancy, as_utc
 from hari.db.session import session_scope
-from hari.worktime import fmt, is_work_time, local, now_utc, today_local
+from hari.worktime import add_work_hours, fmt, is_work_time, local, now_utc, today_local
 
 PROACTIVE_KINDS = {"onboarding"}  # counted against the daily limit
 TICK_SECONDS = 60
@@ -143,6 +143,35 @@ async def pending_retries(session: AsyncSession, now: datetime) -> list[str]:
             and as_utc(m.created_at) > now - timedelta(hours=6)]
 
 
+WAIT_WORK_HOURS = 9  # one work day on the default schedule (09:00–18:00)
+
+
+async def applicants_waiting(session: AsyncSession, now: datetime) -> list[str]:
+    """An application nobody has interviewed or rejected for one work day: remind every owner and HR,
+    once a day, until someone decides. The applicant is not messaged here."""
+    from hari.apply.report import recipients  # here: the report module imports the bot UI
+
+    rows = (await session.execute(select(Application).where(
+        Application.status == "submitted", Application.submitted_at.is_not(None)))).scalars().all()
+    if not rows:
+        return []
+    people = await recipients(session)
+    queued: list[str] = []
+    for app in rows:
+        if now < add_work_hours(None, as_utc(app.submitted_at), WAIT_WORK_HOURS):
+            continue
+        vac = await session.get(Vacancy, app.vacancy_id) if app.vacancy_id else None
+        where = f" ({vac.title})" if vac else ""
+        text = (f"Ҳей, {app.number} — {app.full_name or 'номзод'}{where} сизни кутяпти. "
+                "Кўриб чиқиб, суҳбатга чақиринг ёки рад этинг.")
+        for person in people:
+            msg = await queue(session, person, "applicant_wait", f"app_wait:{app.id}:{person.id}:{today_local(now)}",
+                              text, now)
+            if msg:
+                queued.append(msg.id)
+    return queued
+
+
 async def unreported(session: AsyncSession, now: datetime) -> list[str]:
     """Finished applications whose report never went out (a crash or deploy right after the last answer).
     Two minutes' grace: the applicant's own flow is still sending a fresh one."""
@@ -161,6 +190,7 @@ async def tick(bot: Bot, now: datetime | None = None) -> int:
         ids = await pending_retries(session, now)
         ids += await onboarding_nudges(session, now)
         ids += await case_escalations(session, now)
+        ids += await applicants_waiting(session, now)
         reports = await unreported(session, now)
     sent = 0
     for msg_id in ids:
