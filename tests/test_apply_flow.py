@@ -16,7 +16,11 @@ from tests.test_bot_flow import btn
 async def test_full_application_reaches_owner_and_hr(h_apply, monkeypatch, session_scope):
     h = h_apply
     use_ai(monkeypatch, {"questions": ["Мижоз «қиммат» деса, нима дейсиз?", "Биринчи ойда нима қиласиз?"]},
-           {"verdict": "strong", "reason": "Аниқ ва амалий жавоблар.", "answer_notes": ["n1", "n2"]})
+           {"criteria": {"work_sample": {"score": 3, "evidence": "Нархни қиймат билан тушунтирди"},
+                         "learning": {"score": None, "evidence": ""},
+                         "collaboration": {"score": 3, "evidence": "Аниқ ва ҳурматли ёзди"}},
+            "recommendation": "ready_for_human_review", "summary": "Аниқ ва амалий жавоблар.",
+            "missing": ["Янги маълумотдан кейин ечимни тузатиш мисоли"], "answer_notes": ["n1", "n2"]})
     replies = await h.say(APPLICANT, "/start apply_garmin")
     assert "Тилни танланг" in replies[0]
     replies = await apply_to_the_end(h, link="/start apply_garmin")
@@ -24,13 +28,16 @@ async def test_full_application_reaches_owner_and_hr(h_apply, monkeypatch, sessi
     assert any("Мижоз «қиммат» деса" in m and "4/5" in m for m in h.to(APPLICANT))
     for tg in (OWNER, HR):
         report = "\n".join(h.to(tg))
-        assert "Суҳбатга чақиришга арзийди" in report and "Алиев Вали" in report and "+998901234567" in report
+        assert "Инсон кўриб чиқишига тайёр" in report and "Алиев Вали" in report and "+998901234567" in report
+        assert "Касбий иш намунаси (40%): 3" in report and "Ўрганиш ва муаммо ечиш (15%): номаълум" in report
+        assert "Умумий балл: номаълум" in report  # the interview has no score yet: no total, and no zero
         assert "Сайт: Garmin" in report and "B2B савдо менежери" in report and "Биринчи жавоб" in report
     assert [b for b, _ in h.buttons(OWNER)] == ["Суҳбатга чақириш", "Рад этиш", "Ишга олиш"]
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
     assert app.status == "submitted" and app.number == app.number and app.reported_at is not None
-    assert app.verdict == "strong" and app.job_origin == "ai" and app.source == "apply_garmin"
+    assert app.verdict == "ready" and app.job_origin == "ai" and app.source == "apply_garmin"
+    assert app.scorecard["total"] is None and app.scorecard["criteria"]["interview"]["score"] is None
 
 
 async def test_no_ai_still_reports_in_russian(h_apply):
@@ -40,7 +47,7 @@ async def test_no_ai_still_reports_in_russian(h_apply):
     assert "3 рабочих дней" in replies[0]
     assert any(E.FALLBACK["ru"][0] in m for m in h.to(APPLICANT))
     report = "\n".join(h.to(OWNER))
-    assert "HARI баҳоси: AI баҳоси йўқ" in report and "Сайт: Primus" in report and "Тил: Русский" in report
+    assert "HARI тавсияси: AI баҳоси йўқ" in report and "Сайт: Primus" in report and "Тил: Русский" in report
 
 
 async def test_restart_mid_flow_continues(h_apply):

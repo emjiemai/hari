@@ -22,13 +22,28 @@ A document file looks like:
 Confidential classes (salary, bank, medical, complaints) are refused and never indexed —
 they do not belong in the general HR search (spec §4–5). A changed file replaces its old
 version in the index; a removed file is retired.
+
+Spec 2.0 §5, §7 add optional passport lines for material that came from outside the company:
+
+    source_type: professional_guidance   # law | company_policy | professional_guidance | recommendation
+    publisher: CIPD
+    canonical_url: https://…
+    jurisdiction: professional_guidance
+    rights: {download: allowed, index: review, train: false}
+
+- `rights.index` other than "allowed" (or missing while a publisher / canonical_url is given) means the
+  right to index the text is not established: the passport is kept as a reference with its link, and
+  the text is NOT indexed or served (RIGHTS_UNKNOWN, T25).
+- `rights.train` must be false: HARI trains on nothing.
+- In live mode a document nobody real approved (empty or a «НАМУНА» marker in `approved_by`) is refused
+  (APPROVAL_REQUIRED). In the test stage such sample documents load, and are counted in the system state.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
@@ -38,11 +53,15 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hari import audit
+from hari.config import settings
 from hari.db.models import KnowledgeChunk, KnowledgeDocument
+from hari.digest import is_placeholder
 from hari.translit import normalize
 
 ALLOWED_CLASSES = {"public", "internal", "role"}
 ALLOWED_STATUSES = {"draft", "approved", "retired"}
+SOURCE_TYPES = {"law", "company_policy", "professional_guidance", "recommendation"}
+RIGHTS_VALUES = {"allowed", "review", "denied"}
 REQUIRED = ("doc_id", "title", "version", "status", "classification")
 CHUNK_CHARS = 2400  # about 400–800 tokens of Uzbek text (spec §12 step 5)
 
@@ -53,6 +72,7 @@ class LoadResult:
     unchanged: list[str]
     refused: list[tuple[str, str]]
     retired: list[str]
+    reference: list[str] = field(default_factory=list)  # passport kept, text not indexed (rights not established)
 
 
 def _split_front_matter(raw: str) -> tuple[dict, str]:
@@ -63,6 +83,23 @@ def _split_front_matter(raw: str) -> tuple[dict, str]:
     if not isinstance(meta, dict):
         raise ValueError("front matter is not a mapping")
     return meta, match.group(2)
+
+
+def index_right(meta: dict) -> str | None:
+    """allowed | review | denied for outside material; None for the company's own documents."""
+    rights = meta.get("rights")
+    outside = bool(str(meta.get("publisher") or "").strip() or str(meta.get("canonical_url") or "").strip())
+    if rights is None:
+        return "review" if outside else None
+    if not isinstance(rights, dict):
+        raise ValueError("rights must be a mapping: {download, index, train}")
+    if str(rights.get("train", "false")).strip().lower() not in ("false", "no", "0", "none", ""):
+        raise ValueError("rights.train must be false: HARI is not trained on documents")
+    value = str(rights.get("index") or "review").strip().lower()
+    value = {"true": "allowed", "yes": "allowed", "false": "denied", "no": "denied"}.get(value, value)
+    if value not in RIGHTS_VALUES:
+        raise ValueError(f"rights.index '{value}' unknown")
+    return value
 
 
 def _as_date(value) -> date | None:  # noqa: ANN001 — YAML gives date, str or None
@@ -118,6 +155,14 @@ async def load_directory(session: AsyncSession, directory: str | Path) -> LoadRe
                 raise ValueError(f"classification '{cls}' is not allowed in the HR knowledge base")
             if status not in ALLOWED_STATUSES:
                 raise ValueError(f"status '{status}' unknown")
+            source_type = str(meta.get("source_type") or "").strip().lower() or None
+            if source_type and source_type not in SOURCE_TYPES:
+                raise ValueError(f"source_type '{source_type}' unknown")
+            right = index_right(meta)
+            if status == "approved" and settings.is_live and is_placeholder(str(meta.get("approved_by") or "")):
+                raise ValueError("APPROVAL_REQUIRED: approved_by names no real approver")
+            if status == "approved" and right in ("review", "denied"):
+                status = "reference"  # RIGHTS_UNKNOWN: the link and passport only, the text is not indexed
         except (ValueError, yaml.YAMLError) as exc:
             result.refused.append((path.name, str(exc)))
             logger.warning("Knowledge file {} refused: {}", path.name, exc)
@@ -148,9 +193,18 @@ async def load_directory(session: AsyncSession, directory: str | Path) -> LoadRe
         doc.review_at = _as_date(meta.get("review_at"))
         doc.language = str(meta.get("language") or "uz_cyrl")
         doc.file_hash = file_hash
+        doc.source_type, doc.rights_index = source_type, right
+        doc.publisher = str(meta.get("publisher") or "").strip()[:200] or None
+        doc.canonical_url = str(meta.get("canonical_url") or "").strip()[:500] or None
+        doc.jurisdiction = str(meta.get("jurisdiction") or "").strip()[:60] or None
         if existing is None:
             session.add(doc)
         await session.flush()
+        if status == "reference":
+            result.reference.append(doc_id)
+            await audit.record(session, "knowledge.load", "reference_only", object_type="document",
+                               object_id=doc_id, detail="RIGHTS_UNKNOWN")
+            continue
         for position, (section, text) in enumerate(chunk_markdown(body)):
             session.add(KnowledgeChunk(
                 doc_id=doc_id, doc_version=doc.version, position=position,

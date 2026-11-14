@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
 from hari import cases as C
+from hari import digest, nonresponse
 from hari import onboarding as O
 from hari.access import can_read_document
 from hari.answer import answer_question
@@ -18,19 +19,20 @@ from hari.bot import texts as T
 from hari.bot.common import handles_work, staff_by_tg
 from hari.bot.notifications import acceptor_label, tell_case_handler, tell_step_acceptor
 from hari.bot.ui import (
-    CaseTypeCb, DocCb, HelpfulCb, OfferCaseCb, PickCb, StepCb, apply_button, inline, main_menu, notify,
+    AboutCb, CaseTypeCb, DocCb, HelpfulCb, OfferCaseCb, PickCb, StepCb, apply_button, inline, main_menu, notify,
 )
+from hari.config import settings
 from hari.db.models import AnswerLog, Employee, KnowledgeChunk, KnowledgeDocument
 from hari.db.session import session_scope
 from hari.knowledge.search import Hit
 from hari.answer import source_line
-from hari.worktime import fmt, today_local
+from hari.worktime import fmt, now_utc, today_local
 
 router = Router(name="employee")
 
 # Types an employee picks from the menu ("question" is only offered after an unanswered question).
 MENU_CASE_TYPES = ["leave", "schedule", "timesheet", "certificate", "data_fix", "training",
-                   "pay_question", "legal", "complaint", "support", "other"]
+                   "pay_question", "legal", "complaint", "support", "resignation", "other"]
 
 
 class AskProof(StatesGroup):
@@ -171,6 +173,10 @@ async def receive_proof(message: Message, state: FSMContext, bot: Bot) -> None:
         acceptor = await O.acceptor_for(session, step, owner)
     await state.clear()
     delivered = acceptor is not None and await tell_step_acceptor(bot, acceptor, owner, step)
+    if acceptor is not None:  # the acceptor now owes an answer; whether the card arrived is recorded as is
+        async with session_scope() as session:
+            await nonresponse.track(session, acceptor, "step", step.id,
+                                    f"Мослашув: {owner.full_name} — «{step.title}» қабул кутмоқда", bool(delivered))
     await message.answer(T.say(emp, T.PROOF_SENT.format(acceptor=acceptor_label(step)) if delivered
                                else T.PROOF_NO_ACCEPTOR))
 
@@ -201,30 +207,87 @@ async def case_type_picked(query: CallbackQuery, callback_data: CaseTypeCb, stat
     if emp is None or ctype is None:
         await query.answer(T.NOT_ALLOWED, show_alert=True)
         return
+    await query.answer()
+    if ctype.slug == "complaint":
+        # First who it is about, so the request can never be routed to that person (spec 2.0 §2, T16).
+        await state.update_data(complaint_body=None)
+        await query.message.answer(T.say(emp, T.COMPLAINT_ABOUT), reply_markup=_about_buttons(emp))
+        return
     await state.set_state(NewCase.body)
     await state.update_data(case_type=ctype.slug)
     text = T.CASE_ASK_BODY.format(label=ctype.label)
-    if ctype.slug == "complaint":
-        text += "\n\n" + T.CASE_COMPLAINT_NOTE
+    if ctype.slug == "resignation":
+        text += "\n\n" + T.RESIGNATION_NOTE
     await query.message.answer(T.say(emp, text))
+
+
+def _about_buttons(emp: Employee):  # noqa: ANN202
+    return inline([[(T.say(emp, label), AboutCb(target=target))] for target, label in T.ABOUT_LABELS.items()])
+
+
+@router.callback_query(AboutCb.filter())
+async def complaint_about(query: CallbackQuery, callback_data: AboutCb, state: FSMContext, bot: Bot) -> None:
+    async with session_scope() as session:
+        emp = await staff_by_tg(session, query.from_user.id)
+    if emp is None or callback_data.target not in T.ABOUT_LABELS:
+        await query.answer(T.NOT_ALLOWED, show_alert=True)
+        return
     await query.answer()
+    await query.message.edit_reply_markup(reply_markup=None)
+    body = (await state.get_data()).get("complaint_body")
+    if body:  # the complaint was already written as a chat message: open it now
+        await state.clear()
+        await _open_and_tell(query.message, bot, query.from_user.id, "complaint", body, callback_data.target)
+        return
+    await state.set_state(NewCase.body)
+    await state.update_data(case_type="complaint", about=callback_data.target)
+    ctype = C.CASE_TYPES["complaint"]
+    await query.message.answer(T.say(emp, T.CASE_ASK_BODY.format(label=ctype.label) + "\n\n" + T.CASE_COMPLAINT_NOTE))
 
 
-async def _open_and_tell(message: Message, bot: Bot, telegram_user_id: int, case_type: str, body: str) -> None:
+async def _open_and_tell(message: Message, bot: Bot, telegram_user_id: int, case_type: str, body: str,
+                         about_target: str | None = None, dedupe: str | None = None,
+                         quiet: bool = False) -> None:
+    """Open the request, hand it to its handler and tell the requester who will see it.
+    `quiet`: the requester was already told what happens (an exit-intent signal)."""
+    alerts: list[tuple[Employee, str]] = []
     async with session_scope() as session:
         emp = await staff_by_tg(session, telegram_user_id)
         if emp is None:
             return
-        case, created = await C.open_case(session, emp, case_type, body)
+        about, about_role = None, None
+        if about_target == "manager" and emp.manager_id:
+            about = await session.get(Employee, emp.manager_id)
+        elif about_target in ("hr", "owner"):
+            about_role = about_target
+        case, created = await C.open_case(session, emp, case_type, body, about=about, dedupe=dedupe,
+                                          about_role=about_role)
         assignee = await session.get(Employee, case.assignee_id) if case.assignee_id else None
+        independent = await C.independent_recipient(session)
         if created:
-            await tell_case_handler(bot, session, case)
-            if assignee is None:  # nobody holds the role: HR / owner must still see it
-                for hr in await _any_hr(session):
-                    await notify(bot, hr, f"⚠️ {case.number} учун масъул топилмади. «Иш навбати»да кўринг.")
+            delivered = await tell_case_handler(bot, session, case)
+            if assignee is not None:
+                await nonresponse.track(session, assignee, "case", case.id, nonresponse.case_title(case),
+                                        delivered, now_utc(), about_employee_id=case.about_employee_id)
+            else:  # nobody holds the role: someone allowed must still see it, and the owner's digest lists it
+                for person in await _any_hr(session):
+                    if C.can_handle_case(person, None, case.about_employee_id, case.about_role):
+                        await notify(bot, person, f"⚠️ {case.number} учун масъул топилмади. «Иш навбати»да кўринг.")
+                await digest.add(session, f"unassigned:{case.id}", "unassigned", priority=20,
+                                 fact=f"{case.number} мурожаати учун масъул топилмади.",
+                                 impact="Мурожаат эгасиз қолди: биринчи жавоб муддати ўтиши мумкин.",
+                                 responsible="тайинланмаган", due=fmt(case.first_response_due),
+                                 about_employee_id=case.about_employee_id, about_role=case.about_role)
+            alerts = await C.continuity_signal(session, case, emp)
+    for owner, text in alerts:
+        await notify(bot, owner, text)
+    if quiet:
+        return
     who = f"{assignee.full_name} ({assignee.position})" if assignee else T.CASE_UNASSIGNED
-    await message.answer(T.say(emp, T.CASE_OPENED.format(
-        number=case.number, label=case.title, who=who, due=fmt(case.first_response_due))))
+    text = T.CASE_OPENED.format(number=case.number, label=case.title, who=who, due=fmt(case.first_response_due))
+    if (about_role or (about is not None and about.role in ("hr", "owner"))) and independent is None:
+        text += "\n\n" + T.COMPLAINT_NO_INDEPENDENT
+    await message.answer(T.say(emp, text))
 
 
 async def _any_hr(session) -> list[Employee]:  # noqa: ANN001
@@ -237,7 +300,8 @@ async def _any_hr(session) -> list[Employee]:  # noqa: ANN001
 async def case_body(message: Message, state: FSMContext, bot: Bot) -> None:
     data = await state.get_data()
     await state.clear()
-    await _open_and_tell(message, bot, message.from_user.id, data.get("case_type", "other"), message.text)
+    await _open_and_tell(message, bot, message.from_user.id, data.get("case_type", "other"), message.text,
+                         data.get("about"))
 
 
 @router.callback_query(OfferCaseCb.filter())
@@ -250,6 +314,14 @@ async def offered_case(query: CallbackQuery, callback_data: OfferCaseCb, state: 
         return
     await state.update_data(last_question=None)
     await query.message.edit_reply_markup(reply_markup=None)
+    if callback_data.slug == "complaint":  # ask who it is about before it is routed anywhere (T16)
+        async with session_scope() as session:
+            emp = await staff_by_tg(session, query.from_user.id)
+        if emp is None:
+            return
+        await state.update_data(complaint_body=question)
+        await query.message.answer(T.say(emp, T.COMPLAINT_ABOUT), reply_markup=_about_buttons(emp))
+        return
     await _open_and_tell(query.message, bot, query.from_user.id, callback_data.slug, question)
 
 
@@ -339,6 +411,11 @@ async def question(message: Message, state: FSMContext, bot: Bot) -> None:
             return
         await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         result = await answer_question(session, emp, message.text, today_local())
+    if result.auto_case and not settings.hari_paused:
+        # A stated wish to leave: HR gets the fact in HARI's own words, once a day at most — never the
+        # message itself (spec 2.0 §18, T11). The reply above already told the person who sees it.
+        await _open_and_tell(message, bot, message.from_user.id, result.auto_case, C.EXIT_INTENT_BODY,
+                             dedupe=f"{result.auto_case}:{emp.id}:{today_local()}", quiet=True)
     buttons = []
     if result.offer_case:
         await state.update_data(last_question=message.text)

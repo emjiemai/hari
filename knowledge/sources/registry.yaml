@@ -1,0 +1,160 @@
+# Source registry (spec 2.0 §5, §7, §29, §30). Checked on 2026-11-13.
+#
+# Every entry is "reference": HARI keeps the title and the link, and nothing else. No text from these
+# sources is downloaded, indexed or used for training until HR or the lawyer records the rights for
+# that source and changes it here — reading a page in a browser is not a licence to index it (§5).
+# To use a source: fill `rights` from its terms, set `approved_by` to a real person, set
+# `status: active`, then add the approved text as a document in knowledge/docs with the same
+# `source_id`. `python -m scripts.check_sources` checks this file.
+#
+# review: how often the entry is re-checked (§29 "Янгилаш тартиби").
+# The links are the ones given in the spec; a local-law or UK-law caveat is in `note`.
+
+spec_version: "2.0"
+verified_on: 2026-11-13
+sources:
+  - {source_id: S01, title: "CIPD Profession Map", publisher: CIPD, kind: professional_standard,
+     canonical_url: "https://www.cipd.org/en/the-people-profession/the-profession-map/",
+     jurisdiction: professional_guidance, language: en, review: quarterly,
+     note: "HR knowledge, behaviour and professional standard map. Does not replace Uzbek law."}
+  - {source_id: S02, title: "SHRM Body of Applied Skills and Knowledge 2026", publisher: SHRM, kind: professional_standard,
+     canonical_url: "https://www.shrm.org/content/dam/en/shrm/credentials/shrm-certification/bask/shrm-bask.pdf",
+     jurisdiction: professional_guidance, language: en, review: quarterly,
+     note: "An open download is not a licence to reuse the whole text."}
+  - {source_id: S03, title: "CIPD Selection methods", publisher: CIPD, kind: hr_practice,
+     canonical_url: "https://www.cipd.org/en/knowledge/factsheets/selection-factsheet/",
+     jurisdiction: professional_guidance, language: en, review: quarterly,
+     note: "Several assessment methods, work samples, structured interviews. UK law parts do not apply in Uzbekistan."}
+  - {source_id: S04, title: "CIPD Employee turnover and retention", publisher: CIPD, kind: hr_practice,
+     canonical_url: "https://prod.cipd.org/en/knowledge/factsheets/turnover-retention-factsheet/",
+     jurisdiction: professional_guidance, language: en, review: quarterly,
+     note: "Turnover measure and retention practice; adapt to local work."}
+  - {source_id: S05, title: "CIPD Health and wellbeing at work", publisher: CIPD, kind: hr_practice,
+     canonical_url: "https://www.cipd.org/en/knowledge/factsheets/well-being-factsheet/",
+     jurisdiction: professional_guidance, language: en, review: quarterly,
+     note: "Work conditions, workload, manager's responsibility. Not a source of clinical diagnosis."}
+  - {source_id: S06, title: "CIPD Performance management", publisher: CIPD, kind: hr_practice,
+     canonical_url: "https://www.cipd.org/en/knowledge/factsheets/performance-factsheet/",
+     jurisdiction: professional_guidance, language: en, review: quarterly,
+     note: "Company formulas are approved separately."}
+  - {source_id: S07, title: "Ўзбекистон Республикасининг Меҳнат кодекси", publisher: LexUZ, kind: law,
+     canonical_url: "https://lex.uz/docs/-6257288",
+     jurisdiction: UZ, language: uz, review: daily,
+     note: "Official current text. For a legal question re-check the effective date and the article; the lawyer accepts."}
+  - {source_id: S08, title: "Шахсга доир маълумотлар тўғрисидаги қонун (ЎРҚ-547)", publisher: LexUZ, kind: law,
+     canonical_url: "https://lex.uz/docs/-4396419",
+     jurisdiction: UZ, language: uz, review: daily,
+     note: "Articles 15, 24, 25, 26, 27-1, 28, 30. Storage and transfer abroad; check the current edition."}
+  - {source_id: S09, title: "CIPD Learning and development strategy and policy", publisher: CIPD, kind: hr_practice,
+     canonical_url: "https://www.cipd.org/en/knowledge/factsheets/strategy-development-factsheet/",
+     jurisdiction: professional_guidance, language: en, review: quarterly, note: ""}
+  - {source_id: S10, title: "SIOP Principles for the Validation and Use of Personnel Selection Procedures, 5th ed.",
+     publisher: "SIOP / APA", kind: assessment_standard,
+     canonical_url: "https://www.apa.org/ed/accreditation/personnel-selection-procedures.pdf",
+     jurisdiction: professional_guidance, language: en, review: monthly,
+     note: "Validation and use of assessments."}
+  - {source_id: S11, title: "AERA APA NCME Standards for Educational and Psychological Testing (open access)",
+     publisher: "AERA / APA / NCME", kind: assessment_standard,
+     canonical_url: "https://www.testingstandards.net/open-access-files.html",
+     jurisdiction: professional_guidance, language: en, review: monthly,
+     note: "Open access is not unrestricted training use."}
+  - {source_id: S12, title: "ITC / ATP Guidelines for Technology-Based Assessment", publisher: "ITC / ATP",
+     kind: assessment_standard, canonical_url: "https://www.intestcom.org/page/16",
+     jurisdiction: professional_guidance, language: en, review: monthly,
+     note: "Design, scoring, security and accessibility of digital tests (version 1.1, 2025)."}
+  - {source_id: S13, title: "US OPM Structured interviews", publisher: "US Office of Personnel Management",
+     kind: hr_practice,
+     canonical_url: "https://www.opm.gov/policy-data-oversight/assessment-and-selection/structured-interviews/",
+     jurisdiction: US, language: en, review: quarterly,
+     note: "US method guide; not in place of Uzbek law."}
+  - {source_id: S14, title: "PMI Roles, responsibilities and resources", publisher: PMI, kind: hr_practice,
+     canonical_url: "https://www.pmi.org/learning/library/best-practices-managing-people-quality-management-7012",
+     jurisdiction: professional_guidance, language: en, review: quarterly,
+     note: "RACI. The internal authority matrix is approved by the owner."}
+  - {source_id: S15, title: "CEBMa Evidence-based decision making booklet", publisher: CEBMa, kind: hr_practice,
+     canonical_url: "https://www.cebma.org/assets/Uploads/EBD_Booklet_Ed-2.pdf",
+     jurisdiction: professional_guidance, language: en, review: quarterly, note: ""}
+  - {source_id: S16, title: "ILO: AI in human resource management — the limits of empiricism", publisher: ILO,
+     kind: ai_governance,
+     canonical_url: "https://www.ilo.org/publications/ai-human-resource-management-limits-empiricism",
+     jurisdiction: international, language: en, review: quarterly,
+     note: "Research review; not proof of validity for any model."}
+  - {source_id: S17, title: "O*NET Database", publisher: "O*NET Center", kind: occupational_data,
+     canonical_url: "https://www.onetcenter.org/database.html",
+     jurisdiction: US, language: en, review: quarterly,
+     note: "US context, to be localised. Attribution required (see S17L)."}
+  - {source_id: S17L, title: "O*NET Database content license", publisher: "O*NET Center", kind: license,
+     canonical_url: "https://www.onetcenter.org/license_db.html",
+     jurisdiction: US, language: en, review: quarterly,
+     note: "CC BY 4.0 with the exceptions on the page. Record the version used and the changes."}
+  - {source_id: S18, title: "International Personality Item Pool — permission", publisher: IPIP, kind: psychometrics,
+     canonical_url: "https://ipip.ori.org/newPermission.htm",
+     jurisdiction: international, language: en, review: monthly,
+     note: "Public domain items. That does not make them valid for hiring or normed for Uzbekistan."}
+  - {source_id: S19, title: "SHL candidate practice guidance", publisher: SHL, kind: psychometrics,
+     canonical_url: "https://support.shl.com/viewArticle.html?c=10_91_12_&d=SHL-Candidate-Article-220&hl=en",
+     jurisdiction: vendor, language: en, review: monthly,
+     note: "Practice tests are for familiarisation only. No answer keys are copied; not a hiring score."}
+  - {source_id: S19L, title: "SHL practice tests terms", publisher: SHL, kind: license,
+     canonical_url: "https://www.shlglobal.cn/en/shldirect/en/practice-tests/",
+     jurisdiction: vendor, language: en, review: monthly,
+     note: "Limits on giving practice results to third parties."}
+  - {source_id: S20, title: "MHS MSCEIT 2", publisher: MHS, kind: psychometrics,
+     canonical_url: "https://mhs.com/msceit-2/",
+     jurisdiction: vendor, language: en, review: monthly,
+     note: "Licensed EQ instrument; needs the technical manual, a qualified administrator and a language fit check."}
+  - {source_id: S21, title: "NIST AI 600-1 Generative AI Profile", publisher: NIST, kind: ai_governance,
+     canonical_url: "https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence",
+     jurisdiction: US, language: en, review: monthly,
+     note: "Risk management guidance; not a legal or hiring-validity certificate."}
+  - {source_id: S22, title: "OWASP Top 10 for LLM and GenAI", publisher: OWASP, kind: ai_governance,
+     canonical_url: "https://genai.owasp.org/initiatives/top-10-for-llm-and-genai/",
+     jurisdiction: international, language: en, review: monthly,
+     note: "Pin the exact release and file checksum when it is used."}
+  - {source_id: S23, title: "Google re:Work — Set goals with OKRs", publisher: Google, kind: hr_practice,
+     canonical_url: "https://rework.withgoogle.com/intl/en/guides/set-goals-with-okrs/",
+     jurisdiction: professional_guidance, language: en, review: quarterly,
+     note: "Do not carry stretch scoring into pay or discipline."}
+  - {source_id: S24, title: "CIPD People analytics", publisher: CIPD, kind: hr_practice,
+     canonical_url: "https://www.cipd.org/en/knowledge/factsheets/analytics-factsheet/",
+     jurisdiction: professional_guidance, language: en, review: quarterly, note: ""}
+  - {source_id: S25, title: "CIPD Workforce planning", publisher: CIPD, kind: hr_practice,
+     canonical_url: "https://www.cipd.org/en/knowledge/factsheets/workforce-planning-factsheet/",
+     jurisdiction: professional_guidance, language: en, review: quarterly, note: ""}
+  - {source_id: S26, title: "CIPD Reward", publisher: CIPD, kind: hr_practice,
+     canonical_url: "https://prod.cipd.org/en/knowledge/factsheets/reward-factsheet/",
+     jurisdiction: professional_guidance, language: en, review: quarterly,
+     note: "UK legal rules do not apply in Uzbekistan automatically."}
+
+  # Books (§6, §30): commercial editions. Buying a book gives no right to load it into an AI.
+  # Without a corporate licence HARI works from a lawful short summary and the company's own cases,
+  # and never quotes or concludes from a book it was not given.
+  - {source_id: B01, title: "Armstrong's Handbook of Human Resource Management Practice",
+     publisher: "Kogan Page — Michael Armstrong, Stephen Taylor", kind: book,
+     canonical_url: "https://www.koganpage.com/hr-learning-development/armstrong-s-handbook-of-human-resource-management-practice-9781398622081",
+     jurisdiction: professional_guidance, language: en, review: on_use, note: "HR system and professional basis."}
+  - {source_id: B02, title: "Evidence-Based Management", publisher: "Kogan Page — Eric Barends, Denise M. Rousseau",
+     kind: book,
+     canonical_url: "https://www.koganpage.com/hr-learning-development/evidence-based-management-9780749483746",
+     jurisdiction: professional_guidance, language: en, review: on_use, note: "Finding and weighing evidence."}
+  - {source_id: B03, title: "Agile HR", publisher: "Kogan Page — Natal Dank, Riina Hellström", kind: book,
+     canonical_url: "https://www.koganpage.com/hr-learning-development/agile-hr-9781789665857",
+     jurisdiction: professional_guidance, language: en, review: on_use, note: "Small HR pilots and improvement."}
+  - {source_id: B04, title: "The HR Scorecard", publisher: "HBR Press — Brian E. Becker, Mark A. Huselid, Dave Ulrich",
+     kind: book,
+     canonical_url: "https://store.hbr.org/product/the-hr-scorecard-linking-people-strategy-and-performance/1364",
+     jurisdiction: professional_guidance, language: en, review: on_use, note: "Linking HR to business results."}
+  - {source_id: B05, title: "The Fearless Organization", publisher: "Wiley — Amy C. Edmondson", kind: book,
+     canonical_url: "https://www.wiley.com/en-us/the-fearless-organization-creating-psychological-safety-in-the-workplace-for-learning-innovation-and-growth-p-9781119477242",
+     jurisdiction: professional_guidance, language: en, review: on_use, note: "Reporting errors and risks early."}
+  - {source_id: B06, title: "Working with Emotional Intelligence", publisher: "Penguin Random House — Daniel Goleman",
+     kind: book,
+     canonical_url: "https://www.penguinrandomhouse.com/books/69111/working-with-emotional-intelligence-by-daniel-goleman/",
+     jurisdiction: professional_guidance, language: en, review: on_use,
+     note: "A popular book: no licensed EQ scale may be built from it."}
+  - {source_id: B07, title: "Measure What Matters", publisher: "John Doerr", kind: book,
+     canonical_url: "https://www.whatmatters.com/the-book",
+     jurisdiction: professional_guidance, language: en, review: on_use, note: "Goals and measurable results."}
+  - {source_id: B08, title: "High Output Management", publisher: "Penguin Random House — Andrew S. Grove", kind: book,
+     canonical_url: "https://www.penguinrandomhouse.com/books/72467/high-output-management-by-andrew-s-grove-former-chairman-and-ceo-of-intel/",
+     jurisdiction: professional_guidance, language: en, review: on_use, note: "Manager's work and one-to-ones."}

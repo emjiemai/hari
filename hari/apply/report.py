@@ -10,8 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hari.apply import evaluate as E
+from hari.apply import rubric
 from hari.apply.evaluate import VERDICTS
-from hari.apply.texts import BTN_HIRE, BTN_INTERVIEW, BTN_REJECT, LANG_NAMES, NO_AI, STATUS_LABELS
+from hari.apply.texts import (
+    BTN_HIRE, BTN_INTERVIEW, BTN_INTERVIEW_SCORE, BTN_REJECT, LANG_NAMES, NO_AI, STATUS_LABELS,
+)
 from hari.apply.vacancies import title_for
 from hari.bot.ui import AppActCb, inline, notify, send_proof
 from hari.db.models import Application, Employee, Vacancy
@@ -31,14 +34,18 @@ def _site(source: str) -> str | None:
 
 def _blocks(app: Application, vacancy_title: str) -> list[str]:
     head = [f"Янги ариза {app.number or '—'} — {vacancy_title}",
-            f"HARI баҳоси: {VERDICTS.get(app.verdict or '', NO_AI)}"]
+            f"HARI тавсияси: {VERDICTS.get(app.verdict or '', NO_AI)}"]
     if app.reason:
-        head.append(f"Сабаб: {app.reason}")
+        head.append(f"Асос: {app.reason}")
+    head.append("Қарорни инсон қабул қилади; HARI фақат далил тайёрлайди.")
+    if app.scorecard:
+        head += [""] + rubric.card_lines(app.scorecard)
     details = []
     if app.logic:
         right, total = sum(1 for r in app.logic if r.get("correct")), len(app.logic)
         secs = ", ".join(f"{r.get('seconds')} с" for r in app.logic if r.get("seconds") is not None)
-        details.append(f"Мантиқ: {right}/{total}" + (f" ({secs})" if secs else ""))
+        details.append(f"Мантиқ машқи: {right}/{total}" + (f" ({secs})" if secs else "")
+                       + " — валидланмаган қисқа машқ, якка ўзи қарор асоси эмас")
     details += [f"Исм: {app.full_name}", f"Телефон: {app.phone or '—'}"]
     if app.source != "manual":
         details.append(f"Тил: {LANG_NAMES.get(app.language, app.language)}")
@@ -47,11 +54,17 @@ def _blocks(app: Application, vacancy_title: str) -> list[str]:
         details.append(f"Сайт: {site}")
     if app.status != "submitted":
         details.append(f"Ҳолат: {STATUS_LABELS.get(app.status, app.status)}")
+    if app.decision_basis:
+        details.append(f"Қарор асоси (инсон ёзган): {app.decision_basis}")
+    if app.legal_hold:
+        details.append("Legal hold: маълумот ўчирилмайди, юрист кўради")
+    elif app.deletion_requested_at and not app.purged_at:
+        details.append("Номзод маълумотини ўчиришни сўраган — HR қарори кутилмоқда")
     if app.note:
         details.append(f"Изоҳ (HR): {app.note}")
     blocks = ["\n".join(head) + "\n\n" + "\n".join(details)]
     if app.experience:
-        blocks.append(f"Тажриба: {app.experience}")
+        blocks.append(f"Тажриба (номзоднинг ўз баёни, текширилмаган): {app.experience}")
     notes = app.answer_notes or []
     for i, row in enumerate(app.job or []):
         lines = [f"{i + 1}-савол: {row.get('q', '')}", f"Жавоб: {row.get('a') or '—'}"]
@@ -82,7 +95,10 @@ def report_buttons(app: Application) -> InlineKeyboardMarkup | None:
     if app.status in ("submitted", "interview"):
         row += [(BTN_REJECT, AppActCb(action="reject", app_id=app.id)),
                 (BTN_HIRE, AppActCb(action="hire", app_id=app.id))]
-    return inline([row]) if row else None
+    rows = [row] if row else []
+    if app.status == "interview":  # the person who held the interview scores it; HARI never does
+        rows.append([(BTN_INTERVIEW_SCORE, AppActCb(action="score", app_id=app.id))])
+    return inline(rows) if rows else None
 
 
 async def vacancy_title(session: AsyncSession, app: Application) -> str:
@@ -142,4 +158,5 @@ async def evaluate_and_report(bot: Bot, app_id: str) -> int:
         if evaluation is not None:
             app.verdict, app.reason = evaluation.verdict, evaluation.reason
             app.answer_notes, app.ai_model = evaluation.notes, evaluation.model
+            app.scorecard = evaluation.scorecard
         return await send_report(bot, session, app)

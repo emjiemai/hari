@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from hari import budget
 from hari import onboarding as O
 from hari.db import session as db
 from hari.db.models import Employee
@@ -26,6 +27,7 @@ async def database():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
     await db.create_schema()
+    budget.reset()
     yield
     await db.dispose()
 
@@ -119,7 +121,10 @@ def at_tashkent(day: date, hour: int, minute: int = 0) -> datetime:
 
 
 class FakeBot:
-    def __init__(self, fail: bool = False) -> None:
+    """`fail=True`: Telegram cannot be reached at all (certainly not delivered, safe to retry).
+    `fail="timeout"`: the request went out and no answer came back (it may have arrived)."""
+
+    def __init__(self, fail: bool | str = False) -> None:
         self.sent: list[tuple[int, str]] = []
         self.fail = fail
 
@@ -128,7 +133,8 @@ class FakeBot:
             from aiogram.exceptions import TelegramNetworkError
             from aiogram.methods import SendMessage
 
-            raise TelegramNetworkError(method=SendMessage(chat_id=chat_id, text=text), message="down")
+            message = "Request timeout error" if self.fail == "timeout" else "ClientConnectorError: Cannot connect"
+            raise TelegramNetworkError(method=SendMessage(chat_id=chat_id, text=text), message=message)
         self.sent.append((chat_id, text))
 
 

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hari import audit
+from hari import audit, digest, nonresponse
 from hari.access import can_handle_case
 from hari.config import settings
 from hari.db.models import CaseCounter, CaseEvent, Employee, HRCase
@@ -41,7 +41,14 @@ CASE_TYPES: dict[str, CaseType] = {c.slug: c for c in [
     CaseType("support", "Шахсий суҳбат ёки қўллаб-қувватлаш", ("hr",), "sensitive"),
     CaseType("question", "HARI жавоб топа олмаган савол", ("hr",)),
     CaseType("other", "Бошқа", ("hr",)),
+    # Spec 2.0 §18. A stated wish to leave is opened by HARI with its own minimal wording, never the chat.
+    CaseType("exit_intent", "Кетиш нияти ҳақида сигнал", ("hr", "owner"), "sensitive"),
+    CaseType("resignation", "Ишдан бўшаш аризаси", ("hr", "owner"), "sensitive"),
 ]}
+
+# What HARI itself writes into an exit-intent request: the fact and its status, nothing from the conversation.
+EXIT_INTENT_BODY = ("Ходим ишга оид тасдиқланган каналда кетишни ўйлаётганини айтди. Расмий ариза йўқ. "
+                    "Бу якуний қарор эмас: ниятни ва сабабни HR суҳбатда аниқлайди (контекст текширилиши керак).")
 
 
 class CaseError(ValueError):
@@ -67,15 +74,33 @@ async def _first_active(session: AsyncSession, role: str, exclude: set[str]) -> 
     return next((e for e in rows if e.id not in exclude), None)
 
 
+async def independent_recipient(session: AsyncSession) -> Employee | None:
+    """The person named in INDEPENDENT_COMPLAINT_RECIPIENT, if they are verified active staff."""
+    tg = settings.independent_complaint_recipient
+    if tg is None:
+        return None
+    person = (await session.execute(select(Employee).where(Employee.telegram_user_id == tg))).scalar_one_or_none()
+    return person if person is not None and person.status == "active" and person.identity_verified_at else None
+
+
 async def choose_assignee(session: AsyncSession, requester: Employee, ctype: CaseType,
-                          about: Employee | None) -> Employee | None:
+                          about: Employee | None, about_role: str | None = None) -> Employee | None:
     """Follow the route; skip the requester and whoever the request is about.
-    If HR itself is the subject of a complaint, it goes to the owner (spec §18, A13)."""
+    If HR or the owner is the subject of a complaint, it goes to the independent recipient when one is
+    named; otherwise about HR → the owner, about the owner → HR (spec §18, A13; spec 2.0 §2, T16).
+    `about_role` means the function as a whole ("hr", "owner"): then nobody holding that role gets it."""
     exclude = {requester.id} | ({about.id} if about else set())
+    subject_role = about_role or (about.role if about is not None and about.role in ("hr", "owner") else None)
+    skip_roles = {about_role} if about_role else set()
     route = list(ctype.route)
-    if about is not None and about.role in ("hr", "owner"):
-        route = ["owner", "hr"] if about.role == "hr" else ["hr"]
+    if subject_role:
+        independent = await independent_recipient(session)
+        if independent is not None and independent.id not in exclude and independent.role not in skip_roles:
+            return independent
+        route = ["owner", "hr"] if subject_role == "hr" else ["hr"]
     for step in route:
+        if step in skip_roles:
+            continue
         if step == "manager":
             if requester.manager_id and requester.manager_id not in exclude:
                 mgr = await session.get(Employee, requester.manager_id)
@@ -85,11 +110,12 @@ async def choose_assignee(session: AsyncSession, requester: Employee, ctype: Cas
         person = await _first_active(session, step, exclude)
         if person:
             return person
-    return await _first_active(session, "owner", exclude)
+    return None if "owner" in skip_roles else await _first_active(session, "owner", exclude)
 
 
 async def open_case(session: AsyncSession, requester: Employee, type_slug: str, body: str,
-                    about: Employee | None = None, dedupe: str | None = None) -> tuple[HRCase, bool]:
+                    about: Employee | None = None, dedupe: str | None = None,
+                    about_role: str | None = None) -> tuple[HRCase, bool]:
     """Returns (case, created). The same request replayed (a retried update) opens it once."""
     ctype = CASE_TYPES.get(type_slug)
     if ctype is None:
@@ -103,12 +129,13 @@ async def open_case(session: AsyncSession, requester: Employee, type_slug: str, 
     if existing:
         return existing, False
 
-    assignee = await choose_assignee(session, requester, ctype, about)
+    assignee = await choose_assignee(session, requester, ctype, about, about_role)
     now = now_utc()
     case = HRCase(
         number=await _next_number(session), type=type_slug, requester_id=requester.id, privacy=ctype.privacy,
         status="submitted", assignee_id=assignee.id if assignee else None, title=ctype.label,
-        body=body[:4000], about_employee_id=about.id if about else None, idempotency_key=key,
+        body=body[:4000], about_employee_id=about.id if about else None, about_role=about_role,
+        idempotency_key=key,
         first_response_due=add_work_hours(assignee, now, settings.case_first_response_hours),
     )
     session.add(case)
@@ -119,12 +146,38 @@ async def open_case(session: AsyncSession, requester: Employee, type_slug: str, 
     return case, True
 
 
+async def continuity_signal(session: AsyncSession, case: HRCase, requester: Employee) -> list[tuple[Employee, str]]:
+    """A stated wish to leave or a formal resignation: one minimal line for the owner's digest, and for a
+    formal resignation the owners to tell now (spec 2.0 §18). Returns (owner, text) pairs to send.
+    Only the fact, its status and the continuity question — never the conversation or the reasons."""
+    if case.type not in ("exit_intent", "resignation"):
+        return []
+    assignee = await session.get(Employee, case.assignee_id) if case.assignee_id else None
+    who = f"{requester.full_name} ({requester.position}, {requester.department})"
+    formal = case.type == "resignation"
+    fact = (f"{who} расмий ишдан бўшаш аризаси берди ({case.number})." if formal else
+            f"{who} ишга оид тасдиқланган каналда кетишни ўйлаётганини айтди. Расмий ариза йўқ; бу якуний қарор эмас.")
+    await digest.add(
+        session, f"exit:{case.id}", "continuity", priority=5 if formal else 10, fact=fact,
+        impact=f"Иш узлуксизлиги: «{requester.position}» вазифаларини топшириш ва захира ходим тайёрлигини текшириш керак.",
+        responsible=assignee.full_name if assignee else "HR масъули",
+        due="расмий жараён — HR" if formal else "бугун иш вақтида HR суҳбати")
+    if not formal:
+        return []
+    owners = (await session.execute(select(Employee).where(
+        Employee.role == "owner", Employee.status == "active", Employee.telegram_user_id.is_not(None),
+    ).order_by(Employee.code))).scalars().all()
+    text = (f"HARI: {fact} HR расмий жараённи бошлайди. Иш узлуксизлиги: «{requester.position}» вазифаларини "
+            "топшириш ва ўринбосарни текшириш керак. Тафсилот HR мурожаатида.")
+    return [(o, text) for o in owners if o.id not in (requester.id, case.assignee_id)]
+
+
 async def get_by_number(session: AsyncSession, number: str) -> HRCase | None:
     return (await session.execute(select(HRCase).where(HRCase.number == number))).scalar_one_or_none()
 
 
 async def _require_handler(session: AsyncSession, actor: Employee, case: HRCase, action: str) -> None:
-    if not can_handle_case(actor, case.assignee_id, case.about_employee_id):
+    if not can_handle_case(actor, case.assignee_id, case.about_employee_id, case.about_role):
         await audit.record(session, f"case.{action}", "denied", actor_id=actor.id, object_type="case",
                            object_id=case.number)
         raise CaseError("not_allowed")
@@ -138,6 +191,7 @@ async def take(session: AsyncSession, actor: Employee, case: HRCase) -> HRCase:
         session.add(CaseEvent(case_id=case.id, actor_id=actor.id, event="accepted"))
         await audit.record(session, "case.take", "accepted", actor_id=actor.id, object_type="case",
                            object_id=case.number)
+    await nonresponse.resolve(session, "case", case.id)
     return case
 
 
@@ -154,13 +208,14 @@ async def answer(session: AsyncSession, actor: Employee, case: HRCase, decision:
     session.add(CaseEvent(case_id=case.id, actor_id=actor.id, event=case.status))
     await audit.record(session, "case.answer", case.status, actor_id=actor.id, object_type="case",
                        object_id=case.number)
+    await nonresponse.resolve(session, "case", case.id)
     return case
 
 
 async def open_for_handler(session: AsyncSession, actor: Employee) -> list[HRCase]:
     stmt = select(HRCase).where(HRCase.status.in_(("submitted", "accepted", "in_review", "decided")))
     rows = (await session.execute(stmt.order_by(HRCase.created_at))).scalars().all()
-    return [c for c in rows if can_handle_case(actor, c.assignee_id, c.about_employee_id)
+    return [c for c in rows if can_handle_case(actor, c.assignee_id, c.about_employee_id, c.about_role)
             and (c.assignee_id == actor.id or c.privacy == "normal" or actor.role == "owner")]
 
 

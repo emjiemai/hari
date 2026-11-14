@@ -72,7 +72,12 @@ def can_accept_step(actor: Employee, step: OnboardingStep, owner_of_plan: Employ
     return False
 
 
-def can_handle_case(actor: Employee, assignee_id: str | None, about_employee_id: str | None) -> bool:
+def can_handle_case(actor: Employee, assignee_id: str | None, about_employee_id: str | None,
+                    about_role: str | None = None) -> bool:
     if not is_staff(actor) or actor.id == about_employee_id:
         return False  # a person a complaint is about never handles it (spec §18)
-    return actor.id == assignee_id or actor.role in HR_ROLES
+    if actor.id == assignee_id:
+        return True
+    if about_role and actor.role == about_role:
+        return False  # a complaint about HR or the owner as such: nobody in that role sees it (spec 2.0 §2)
+    return actor.role in HR_ROLES

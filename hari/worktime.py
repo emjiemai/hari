@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
-from hari.config import TASHKENT
+from hari.config import TASHKENT, settings
 from hari.db.models import Employee
 
 
@@ -62,3 +63,81 @@ def add_work_hours(emp: Employee | None, start: datetime, hours: int,
                 remaining -= available
         cur = (cur + timedelta(days=1)).replace(hour=0, minute=0)
     return (cur + remaining).astimezone(timezone.utc)
+
+
+# --------------------------------------------------------------------------- business minutes (spec 2.0 §19)
+
+@dataclass(frozen=True)
+class Schedule:
+    """One person's confirmed work calendar. Hours are whole Tashkent hours."""
+
+    days: frozenset[int]  # weekdays worked, Monday = 0
+    start_hour: int
+    end_hour: int
+    saturday_end_hour: int | None = None  # a shorter Saturday, if any
+    lunch: tuple[int, int] | None = None  # (from hour, to hour), not counted
+    holidays: frozenset[str] = frozenset()  # ISO dates nobody works
+
+    def windows(self, day: date) -> list[tuple[int, int]]:
+        """Work stretches of that day as (from minute, to minute) of the day."""
+        if day.weekday() not in self.days or day.isoformat() in self.holidays:
+            return []
+        end = self.end_hour
+        if day.weekday() == 5 and self.saturday_end_hour is not None:
+            end = min(end, self.saturday_end_hour)
+        start = self.start_hour
+        if end <= start:
+            return []
+        if self.lunch and start < self.lunch[1] and self.lunch[0] < end:
+            parts = [(start, min(self.lunch[0], end)), (max(self.lunch[1], start), end)]
+            return [(a * 60, b * 60) for a, b in parts if b > a]
+        return [(start * 60, end * 60)]
+
+
+def schedule_for(emp: Employee | None) -> Schedule:
+    """The person's own days and hours, with the company's lunch break, short Saturday and holidays."""
+    if emp is None:
+        days, start, end = frozenset(range(6)), settings.default_work_start_hour, settings.default_work_end_hour
+    else:
+        days = frozenset(int(d) for d in emp.work_days.split(",") if d.strip().isdigit())
+        start, end = emp.work_start_hour, emp.work_end_hour
+    return Schedule(days, start, end, settings.saturday_end_hour, settings.lunch_hours, settings.holiday_dates)
+
+
+def is_business_time(schedule: Schedule, now: datetime) -> bool:
+    loc = local(now)
+    minute = loc.hour * 60 + loc.minute
+    return any(a <= minute < b for a, b in schedule.windows(loc.date()))
+
+
+def business_minutes_between(schedule: Schedule, start: datetime, end: datetime) -> int:
+    """Work minutes from start to end in that calendar. Nights, days off, lunch and holidays count as zero."""
+    if end <= start:
+        return 0
+    a, b = local(start), local(end)
+    total, day = 0, a.date()
+    while day <= b.date():
+        lo = a.hour * 60 + a.minute if day == a.date() else 0
+        hi = b.hour * 60 + b.minute if day == b.date() else 24 * 60
+        for w_from, w_to in schedule.windows(day):
+            total += max(0, min(hi, w_to) - max(lo, w_from))
+        day += timedelta(days=1)
+    return total
+
+
+def add_business_minutes(schedule: Schedule, start: datetime, minutes: int) -> datetime | None:
+    """The moment the given number of work minutes has passed; None if the calendar has no work time at all."""
+    cur = local(start).replace(second=0, microsecond=0)
+    remaining, day = minutes, cur.date()
+    for _ in range(400):
+        lo = cur.hour * 60 + cur.minute if day == cur.date() else 0
+        for w_from, w_to in schedule.windows(day):
+            begin = max(lo, w_from)
+            if begin >= w_to:
+                continue
+            if remaining <= w_to - begin:
+                at = datetime(day.year, day.month, day.day, tzinfo=TASHKENT) + timedelta(minutes=begin + remaining)
+                return at.astimezone(timezone.utc)
+            remaining -= w_to - begin
+        day += timedelta(days=1)
+    return None

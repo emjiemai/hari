@@ -27,7 +27,7 @@ HIRE_FROM = ("submitted", "interview")
 
 
 class ApplyError(ValueError):
-    """Codes: vacancy_closed, duplicate."""
+    """Codes: vacancy_closed, duplicate, basis_required."""
 
 
 async def draft_for(session: AsyncSession, tg: int) -> Application | None:
@@ -185,12 +185,19 @@ async def _current(session: AsyncSession, app_id: str) -> Decision:
     return Decision(False, app.status if app else "missing", who.full_name if who else None)
 
 
-async def decide(session: AsyncSession, app_id: str, actor: Employee, action: str) -> Decision:
+async def decide(session: AsyncSession, app_id: str, actor: Employee, action: str,
+                 basis: str | None = None) -> Decision:
+    """A person's decision. A rejection is recorded only with the basis that person wrote (spec 2.0 §14):
+    HARI's card is evidence for them, never the decision."""
     if action not in DECISIONS:
         raise ValueError(action)
     status = "interview" if action == "interview" else "rejected"
-    ok = await _conditional(session, app_id, DECISIONS[action],
-                            {"status": status, "decided_by": actor.id, "decided_at": now_utc()})
+    values: dict = {"status": status, "decided_by": actor.id, "decided_at": now_utc()}
+    if action == "reject":
+        if not (basis or "").strip():
+            raise ApplyError("basis_required")
+        values["decision_basis"] = clip(basis)
+    ok = await _conditional(session, app_id, DECISIONS[action], values)
     await audit.record(session, "application.decide", "done" if ok else "too_late", actor_id=actor.id,
                        object_type="application", object_id=app_id, detail=action)
     if not ok:

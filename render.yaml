@@ -58,3 +58,10 @@ services:
         value: "2"
       - key: HARI_PAUSED
         value: "false"  # emergency stop: set to true in Render → Environment
+      # Spec 2.0 §25. shadow = test stage. Before "live", set in Render → Environment the values a person
+      # must decide: INDEPENDENT_COMPLAINT_RECIPIENT, LLM_DAILY_CALL_LIMIT, RETENTION_POLICY_VERSION,
+      # RETENTION_REJECTED_DAYS (see .env.example).
+      - key: HARI_MODE
+        value: shadow
+      - key: EXTERNAL_PERSONAL_DATA_EGRESS
+        value: disabled

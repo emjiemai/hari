@@ -413,7 +413,8 @@ async def case_answer_ask(query: CallbackQuery, callback_data: CaseActCb, state:
     async with session_scope() as session:
         me = await staff_by_tg(session, query.from_user.id)
         case = await C.get_by_number(session, callback_data.number)
-        allowed = me is not None and case is not None and can_handle_case(me, case.assignee_id, case.about_employee_id)
+        allowed = me is not None and case is not None and can_handle_case(
+            me, case.assignee_id, case.about_employee_id, case.about_role)
     if not allowed:
         await query.answer(T.NOT_ALLOWED, show_alert=True)
         return

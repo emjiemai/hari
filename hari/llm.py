@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import httpx
 from loguru import logger
 
+from hari import budget
 from hari.config import settings
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -40,7 +41,12 @@ class LLMClient:
             raise LLMUnavailable("no API key")
         last_error = "unknown"
         async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds, transport=self._transport) as client:
-            for model in self.models:
+            for model in self.models[:settings.max_retries]:
+                refusal = budget.state.refusal()  # the owner's daily limit and the circuit breaker (spec 2.0 §23)
+                if refusal:
+                    logger.warning("LLM request not sent: {}", refusal)
+                    raise LLMUnavailable(refusal)
+                budget.state.spent()
                 try:
                     resp = await client.post(
                         URL,
@@ -56,12 +62,16 @@ class LLMClient:
                     if resp.status_code != 200:
                         last_error = f"HTTP {resp.status_code}"
                         logger.warning("LLM {} failed: {}", model, last_error)
+                        budget.state.failed()
                         continue
                     content = resp.json()["choices"][0]["message"].get("content") or ""
-                    return LLMReply(data=parse_json(content), model=model)
+                    reply = LLMReply(data=parse_json(content), model=model)
+                    budget.state.succeeded()
+                    return reply
                 except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
                     last_error = type(exc).__name__
                     logger.warning("LLM {} failed: {}", model, last_error)
+                    budget.state.failed()
         raise LLMUnavailable(last_error)
 
 
