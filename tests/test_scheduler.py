@@ -81,19 +81,48 @@ async def test_a09_failed_send_is_retried_later_not_lost_and_not_doubled(newcome
         assert (await s.execute(select(OutboundMessage))).scalar_one().status == "sent"
 
 
-async def test_late_case_reminds_handler_and_owner_once(session_scope, staff):
+async def test_unanswered_case_goes_reminder_then_manager_then_owner_digest(session_scope, staff):
+    """Spec 2.0 §19: 120 work minutes → one private reminder, 240 → the manager, 480 → the owner's digest."""
+    from hari import nonresponse
+
     async with session_scope() as s:
-        await staff(s, "Эгаев Улуғ", "owner", tg=10)
-        await staff(s, "Кадрова Зайнаб", "hr", tg=11)
+        boss = await staff(s, "Эгаев Улуғ", "owner", tg=10)
+        await staff(s, "Кадрова Зайнаб", "hr", tg=11, manager=boss)
         emp = await staff(s, "Аълоев Анвар", tg=12)
         case, _ = await C.open_case(s, emp, "certificate", "маълумотнома")
-        case.first_response_due = at_tashkent(MONDAY, 10)
+        hr = await s.get(type(emp), case.assignee_id)
+        await nonresponse.track(s, hr, "case", case.id, nonresponse.case_title(case), delivered=True,
+                                now=at_tashkent(MONDAY, 9))
     bot = FakeBot()
-    await scheduler.tick(bot, at_tashkent(MONDAY, 9))
+    await scheduler.tick(bot, at_tashkent(MONDAY, 10, 30))  # 90 work minutes
     assert bot.sent == []
-    await scheduler.tick(bot, at_tashkent(MONDAY, 11))
-    await scheduler.tick(bot, at_tashkent(MONDAY, 12))
-    assert sorted(chat for chat, _ in bot.sent) == [10, 11]
+    await scheduler.tick(bot, at_tashkent(MONDAY, 11, 5))  # 125
+    await scheduler.tick(bot, at_tashkent(MONDAY, 11, 30))  # still one reminder
+    assert [chat for chat, _ in bot.sent] == [11] and "Жавобингиз кутилмоқда" in bot.sent[0][1]
+    await scheduler.tick(bot, at_tashkent(MONDAY, 14, 5))  # 9–12 and 13–14:05 = 245 (lunch is not counted)
+    assert [chat for chat, _ in bot.sent] == [11, 10] and "хулоса эмас" in bot.sent[1][1]
+    await scheduler.tick(bot, at_tashkent(MONDAY, 17, 45))  # 465: not yet 480, and no digest line
+    assert len(bot.sent) == 2
+    await scheduler.tick(bot, at_tashkent(date(2026, 11, 10), 9, 20))  # 480 + 20, next morning
+    await scheduler.tick(bot, at_tashkent(date(2026, 11, 10), 17, 35))  # the daily digest
+    assert [chat for chat, _ in bot.sent] == [11, 10, 10]
+    assert "кунлик дайжест" in bot.sent[2][1] and "HR-" in bot.sent[2][1] and "жавобсиз" in bot.sent[2][1]
+
+
+async def test_answering_the_case_stops_the_reminders(session_scope, staff):
+    from hari import nonresponse
+
+    async with session_scope() as s:
+        await staff(s, "Эгаев Улуғ", "owner", tg=10)
+        hr = await staff(s, "Кадрова Зайнаб", "hr", tg=11)
+        emp = await staff(s, "Аълоев Анвар", tg=12)
+        case, _ = await C.open_case(s, emp, "certificate", "маълумотнома")
+        await nonresponse.track(s, hr, "case", case.id, nonresponse.case_title(case), delivered=True,
+                                now=at_tashkent(MONDAY, 9))
+        await C.take(s, hr, case)
+    bot = FakeBot()
+    await scheduler.tick(bot, at_tashkent(MONDAY, 17))
+    assert bot.sent == []
 
 
 async def test_paused_scheduler_sends_nothing(newcomer, monkeypatch):

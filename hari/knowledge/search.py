@@ -54,6 +54,8 @@ class Hit:
     section: str
     text: str
     score: float
+    source_type: str | None = None  # law | company_policy | professional_guidance | recommendation
+    review_overdue: bool = False  # the document's review date has passed (spec 2.0 SOURCE_STALE)
 
 
 async def allowed_chunks(session: AsyncSession, emp: Employee, today: date) -> list[tuple[KnowledgeChunk, KnowledgeDocument]]:
@@ -99,6 +101,7 @@ async def search(session: AsyncSession, emp: Employee, query: str, today: date, 
             idf = max(math.log(1 + (n - df[tok] + 0.5) / (df[tok] + 0.5)), 0.2)
             score += idf * f * (k1 + 1) / (f + k1 * (1 - b + b * length / avg_len))
         if matched and matched / len(q_tokens) >= MIN_COVERAGE:
-            hits.append(Hit(chunk.id, doc.doc_id, doc.title, doc.version, chunk.section, chunk.text, round(score, 3)))
+            hits.append(Hit(chunk.id, doc.doc_id, doc.title, doc.version, chunk.section, chunk.text, round(score, 3),
+                            doc.source_type, bool(doc.review_at and doc.review_at < today)))
     hits.sort(key=lambda h: h.score, reverse=True)
     return hits[:k]

@@ -20,11 +20,12 @@ from loguru import logger
 from hari.apply import applications as A
 from hari.apply import evaluate as E
 from hari.apply.logic_bank import by_id, option_labels, question_text
-from hari.apply.report import evaluate_and_report
+from hari import retention
+from hari.apply.report import evaluate_and_report, recipients
 from hari.apply.texts import LANG_BUTTONS, t
 from hari.apply.vacancies import list_open, title_for
 from hari.bot.common import handles_work, staff_by_tg
-from hari.bot.ui import ApplyCb, inline, main_menu
+from hari.bot.ui import ApplyCb, inline, main_menu, notify
 from hari.config import settings
 from hari.db.models import Application, Vacancy
 from hari.db.session import session_scope
@@ -98,7 +99,8 @@ async def vacancy_buttons(session, lang: str):  # noqa: ANN001, ANN201
 def status_reply(app: Application) -> Reply:
     when = local(app.submitted_at).strftime("%d.%m.%Y") if app.submitted_at else ""
     return (t(app.language, f"status_{app.status}", date=when),
-            inline([[(t(app.language, "apply_again_btn"), ApplyCb(action="again", value=""))]]))
+            inline([[(t(app.language, "apply_again_btn"), ApplyCb(action="again", value=""))],
+                    [(t(app.language, "delete_btn"), ApplyCb(action="delete", value=""))]]))
 
 
 async def send(target: Message, replies: list[Reply]) -> None:
@@ -196,7 +198,37 @@ async def _draft(session, query: CallbackQuery) -> Application | None:  # noqa: 
     return await A.draft_for(session, query.from_user.id)
 
 
-@router.callback_query(ApplyCb.filter(F.action != "again"))
+@router.callback_query(ApplyCb.filter(F.action == "delete"))
+async def ask_deletion(query: CallbackQuery, bot: Bot) -> None:
+    """The applicant asks for their data to be deleted. A person at HR decides; a legal hold stops it
+    (spec 2.0 §10, T24)."""
+    await query.answer()
+    tg = query.from_user.id
+    async with session_scope() as session:
+        if await staff_by_tg(session, tg) is not None:
+            return
+        app = await A.draft_for(session, tg) or await A.last_submitted(session, tg)
+        if app is None:
+            return
+        lang = app.language
+        if app.status == "draft":  # nothing was submitted: the draft simply goes
+            await session.delete(app)
+            await query.message.answer(t(lang, "no_consent"))
+            return
+        fresh = await retention.request_deletion(session, app)
+        held, number, app_id = bool(app.legal_hold), app.number, app.id
+        people = await recipients(session) if fresh else []
+    await query.message.answer(t(lang, "delete_hold" if held else "delete_requested" if fresh else "delete_waiting"))
+    from hari.bot.handlers.hiring import deletion_buttons  # here: hiring imports the staff handlers
+
+    for person in people:
+        await notify(bot, person, f"{number}: номзод шахсий маълумотини ўчиришни сўради."
+                     + (" Legal hold ўрнатилган — юрист кўриб чиқиши керак." if held else
+                        " Қонуний сақлаш асоси бўлмаса ўчиринг; бўлса, legal hold ўрнатинг."),
+                     None if held else deletion_buttons(app_id))
+
+
+@router.callback_query(ApplyCb.filter(~F.action.in_({"again", "delete"})))
 async def on_button(query: CallbackQuery, callback_data: ApplyCb, bot: Bot) -> None:
     action, value = callback_data.action, callback_data.value
     before: list[Reply] = []

@@ -101,7 +101,9 @@ async def test_numbering_and_decisions_first_wins(session_scope, staff):
     async with session_scope() as s:
         assert (await decide(s, app_id, boss, "interview")).ok
     async with session_scope() as s:
-        assert (await decide(s, app_id, hr, "reject")).ok  # an interview isn't final
+        with pytest.raises(ApplyError):  # a rejection without a person's written basis is not recorded
+            await decide(s, app_id, hr, "reject")
+        assert (await decide(s, app_id, hr, "reject", basis="Иш намунаси қабул мезонига етмади")).ok
     async with session_scope() as s:
         late = await decide(s, app_id, boss, "interview")
         assert not late.ok and late.status == "rejected" and late.decided_by_name == "Кадрова Зайнаб"

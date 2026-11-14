@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 from zoneinfo import ZoneInfo
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 TASHKENT = ZoneInfo("Asia/Tashkent")
+SPEC_VERSION = "2.0"  # HARI_HR_AI_Texnik_Topshiriq_UZ, 13.11.2026
 
 
 class Settings(BaseSettings):
@@ -51,6 +52,83 @@ class Settings(BaseSettings):
     hari_owners: str = ""
     # "We reply within N working days" — told to applicants when they finish
     apply_reply_days: int = 3
+
+    # ---- Spec 2.0 (13.11.2026) §25 "Бошланғич конфигурация". HARI never hires, rejects, disciplines or
+    # changes pay by itself, trains on nothing and predicts nobody's leaving: those are not settings, the
+    # code has no such path. What is left to set:
+    #
+    # shadow — the test stage (sample documents allowed; a missing value below is only reported).
+    # live   — real staff data: a missing value blocks the workflow that needs it (§25).
+    hari_mode: str = "shadow"
+    # Work minutes without an answer before: one private reminder, the manager, the owner digest (§19).
+    nonresponse_business_minutes: str = "120,240,480"
+    # A message that Telegram refused for a while is tried this many times, then marked failed (§23).
+    max_retries: int = 3
+    # Lunch break left out of work minutes, "12-13"; empty = no break (§19 example).
+    lunch_break: str = "12-13"
+    # Saturday ends earlier than other work days (e.g. 14); empty = same hours as the other days.
+    saturday_end_hour: int | None = None
+    # Days nobody works (HR calendar): ISO dates, comma-separated.
+    holidays: str = ""
+    # Complaints about the owner or HR go to this verified staff account (Telegram ID) instead (§2).
+    independent_complaint_recipient: int | None = None
+    # AI requests allowed per day (the owner's approved budget, §23 "Чексиз харажат"). Empty = not approved.
+    llm_daily_call_limit: int | None = None
+    # Failures in a row before AI calls stop for a while, and for how long.
+    llm_breaker_failures: int = 5
+    llm_breaker_minutes: int = 10
+    # Retention (§10): nothing is deleted by timer until a lawyer-approved policy version and days are set.
+    retention_policy_version: str = ""
+    retention_rejected_days: int | None = None
+    # disabled — phones, e-mails, document numbers and the person's name are masked before any AI request.
+    # allowed  — only after the lawyer accepts the AI provider (§10).
+    external_personal_data_egress: str = "disabled"
+    # Owner digest, Tashkent time "HH:MM" (§20). Weekly report: Friday at this time.
+    owner_digest_time: str = "17:30"
+    weekly_report_time: str = "16:00"
+    # A group smaller than this is never broken out in a report (§20, T28).
+    min_group_size: int = 5
+    # Minutes an approval stays valid (§25 "Approval token").
+    approval_ttl_minutes: int = 15
+
+    @field_validator("saturday_end_hour", "independent_complaint_recipient", "llm_daily_call_limit",
+                     "retention_rejected_days", mode="before")
+    @classmethod
+    def _empty_is_unset(cls, value):  # noqa: ANN001, ANN206 — an empty line in .env / Render means "not set"
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @property
+    def is_live(self) -> bool:
+        return self.hari_mode.strip().lower() == "live"
+
+    @property
+    def nonresponse_thresholds(self) -> tuple[int, int, int]:
+        parts = [int(p) for p in (x.strip() for x in self.nonresponse_business_minutes.split(",")) if p.isdigit()]
+        return (parts[0], parts[1], parts[2]) if len(parts) == 3 and parts[0] < parts[1] < parts[2] else (120, 240, 480)
+
+    @property
+    def lunch_hours(self) -> tuple[int, int] | None:
+        start, _, end = self.lunch_break.partition("-")
+        if start.strip().isdigit() and end.strip().isdigit() and 0 <= int(start) < int(end) <= 24:
+            return int(start), int(end)
+        return None
+
+    @property
+    def holiday_dates(self) -> frozenset[str]:
+        return frozenset(x.strip() for x in self.holidays.split(",") if x.strip())
+
+    def missing_config(self) -> list[str]:
+        """Values §25 leaves empty on purpose: a person must fill them, never HARI."""
+        missing = []
+        if not self.owner_ids:
+            missing.append("HARI_OWNERS")
+        if self.independent_complaint_recipient is None:
+            missing.append("INDEPENDENT_COMPLAINT_RECIPIENT")
+        if self.llm_daily_call_limit is None:
+            missing.append("LLM_DAILY_CALL_LIMIT")
+        if not self.retention_policy_version or self.retention_rejected_days is None:
+            missing.append("RETENTION_POLICY_VERSION")
+        return missing
 
     @property
     def owner_ids(self) -> list[int]:

@@ -31,6 +31,12 @@ class OfferCaseCb(CallbackData, prefix="oc"):
     slug: str
 
 
+class AboutCb(CallbackData, prefix="ab"):
+    """Who a complaint is about, so it never goes to them: manager | hr | owner | other."""
+
+    target: str
+
+
 class CaseActCb(CallbackData, prefix="ca"):
     action: str  # take | answer | close_yes | close_no
     number: str
@@ -47,7 +53,7 @@ class ApplyCb(CallbackData, prefix="ap"):
 
 
 class AppActCb(CallbackData, prefix="aa"):
-    action: str  # interview | reject | hire | show
+    action: str  # interview | reject | hire | show | score | iv0…iv4 | purge | hold
     app_id: str
 
 

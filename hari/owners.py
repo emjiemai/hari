@@ -10,8 +10,8 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hari import audit
-from hari.db.models import ROLES, Employee
+from hari import approvals, audit
+from hari.db.models import ROLES, Approval, Employee
 from hari.employees import CardInput, create_card
 from hari.worktime import now_utc, today_local
 
@@ -57,7 +57,7 @@ async def claim_owner_name(session: AsyncSession, telegram_user_id: int, first: 
     emp.full_name = name if len(name.split()) >= 2 else f"{name or PLACEHOLDER} {PLACEHOLDER}"
 
 
-async def change_role(session: AsyncSession, actor: Employee, target_id: str, role: str) -> Employee:
+async def _checked_target(session: AsyncSession, actor: Employee, target_id: str, role: str) -> Employee:
     if actor.role != "owner":
         raise RoleError("Ролни фақат эгаси ўзгартира олади.")
     if role not in ROLES:
@@ -70,6 +70,34 @@ async def change_role(session: AsyncSession, actor: Employee, target_id: str, ro
             Employee.role == "owner", Employee.status == "active"))).scalar_one()
         if owners <= 1:
             raise RoleError("Охирги эгасининг ролини ўзгартириб бўлмайди. Аввал бошқа эгаси тайинланг.")
+    return target
+
+
+def _role_payload(target: Employee, role: str) -> dict:
+    return {"target": target.id, "from": target.role, "to": role}
+
+
+async def request_role_change(session: AsyncSession, actor: Employee, target_id: str, role: str) -> Approval:
+    """A draft: nothing changes until `confirm_role_change` uses the approval (spec 2.0 §25, level L2)."""
+    target = await _checked_target(session, actor, target_id, role)
+    if target.role == role:
+        raise RoleError("Ходимнинг роли аллақачон шундай.")
+    return await approvals.request(session, actor, "role.change", target.id, _role_payload(target, role),
+                                   source_version=str(target.version))
+
+
+async def confirm_role_change(session: AsyncSession, actor: Employee, approval_id: str, target_id: str,
+                              role: str) -> Employee:
+    """Checks the approval against the record as it is NOW, then changes the role. An approval that is
+    expired, used, someone else's, or made for a different change or an older record raises ApprovalError."""
+    target = await _checked_target(session, actor, target_id, role)
+    await approvals.consume(session, approval_id, actor, "role.change", target.id, _role_payload(target, role),
+                            source_version=str(target.version))
+    return await change_role(session, actor, target_id, role)
+
+
+async def change_role(session: AsyncSession, actor: Employee, target_id: str, role: str) -> Employee:
+    target = await _checked_target(session, actor, target_id, role)
     old, target.role = target.role, role
     await audit.record(session, "role.change", "changed", actor_id=actor.id, object_type="employee",
                        object_id=target.id, detail=f"{old}->{role}")

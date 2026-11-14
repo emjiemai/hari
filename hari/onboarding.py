@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from hari import audit
+from hari import audit, nonresponse
 from hari.access import can_accept_step
 from hari.db.models import Employee, OnboardingPlan, OnboardingStep
 from hari.worktime import now_utc, work_days_between
@@ -151,6 +151,7 @@ async def decide(session: AsyncSession, actor: Employee, step_id: str, accept: b
         step.status, step.return_reason = "returned", (reason or "").strip()[:1000] or None
     await audit.record(session, "onboarding.decide", "accepted" if accept else "returned", actor_id=actor.id,
                        object_type="step", object_id=step.id)
+    await nonresponse.resolve(session, "step", step.id)
     if accept:
         await _maybe_finish(session, step.plan_id)
     return step, owner

@@ -7,7 +7,7 @@ import re
 from sqlalchemy import func, select
 
 from hari.db.models import Application, Employee
-from tests.apply_fixtures import APPLICANT, HR, OWNER, h_apply, h_apply_done  # noqa: F401
+from tests.apply_fixtures import APPLICANT, HR, OWNER, h_apply, h_apply_done, reject  # noqa: F401
 from tests.test_bot_flow import btn
 
 
@@ -45,7 +45,7 @@ async def test_hire_after_reject_creates_nothing(h_apply_done, session_scope):
     async with session_scope() as s:
         before = (await s.execute(select(func.count()).select_from(Employee))).scalar_one()
     hire = btn(h, OWNER, "Ишга олиш")
-    await h.press(HR, btn(h, HR, "Рад этиш"))
+    await reject(h, HR)
     replies = await h.press(OWNER, hire)
     assert any("аллақачон" in a for a in h.session.alerts) and replies == []
     async with session_scope() as s:
@@ -63,7 +63,7 @@ async def test_decision_while_the_card_is_open_wins(h_apply_done, session_scope)
     await h.press(OWNER, btn(h, OWNER, "Ўзбек (кирилл)"))
     async with session_scope() as s:
         before = (await s.execute(select(func.count()).select_from(Employee))).scalar_one()
-    await h.press(HR, btn(h, HR, "Рад этиш"))  # HR rejects while the owner is still on the card
+    await reject(h, HR)  # HR rejects while the owner is still on the card
     replies = await h.press(OWNER, btn(h, OWNER, "Сақлаш"))
     assert "аллақачон" in replies[-1]
     async with session_scope() as s:

@@ -100,7 +100,8 @@ class KnowledgeDocument(Base):
     doc_id: Mapped[str] = mapped_column(String(60), primary_key=True)
     title: Mapped[str] = mapped_column(String(300))
     version: Mapped[str] = mapped_column(String(20))
-    status: Mapped[str] = mapped_column(String(20))  # draft | approved | retired
+    # draft | approved | retired | reference (passport and link only: the text is not indexed, spec 2.0 §5)
+    status: Mapped[str] = mapped_column(String(20))
     classification: Mapped[str] = mapped_column(String(20))  # public | internal | role
     roles: Mapped[str] = mapped_column(Text, default="")  # comma list; empty = all roles
     departments: Mapped[str] = mapped_column(Text, default="")  # comma list; empty = all
@@ -112,6 +113,12 @@ class KnowledgeDocument(Base):
     language: Mapped[str] = mapped_column(String(10), default="uz_cyrl")
     file_hash: Mapped[str] = mapped_column(String(64))
     loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Spec 2.0 §7 source passport. law | company_policy | professional_guidance | recommendation
+    source_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    rights_index: Mapped[str | None] = mapped_column(String(10), nullable=True)  # allowed | review | denied
+    publisher: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    canonical_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    jurisdiction: Mapped[str | None] = mapped_column(String(60), nullable=True)
 
 
 class KnowledgeChunk(Base):
@@ -191,6 +198,8 @@ class HRCase(Base):
     body: Mapped[str] = mapped_column(Text)
     # For complaints: who it is about — that person never handles it (spec §18)
     about_employee_id: Mapped[str | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    # A complaint about a function, not one named person ("hr", "owner"): nobody in that role sees it (spec 2.0 §2)
+    about_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
     decision: Mapped[str | None] = mapped_column(Text, nullable=True)
     first_response_due: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     first_response_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -233,7 +242,8 @@ class OutboundMessage(Base):
     kind: Mapped[str] = mapped_column(String(30))
     idempotency_key: Mapped[str] = mapped_column(String(120))
     local_date: Mapped[date] = mapped_column(Date)
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | sent | failed
+    # pending | sent | failed | unknown (a timeout: it may have arrived, so it is never resent blindly — T21)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     text: Mapped[str] = mapped_column(Text, default="")  # what to (re)send; HARI's own text, not the person's
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -342,6 +352,13 @@ class Application(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    # Spec 2.0 §14: the evidence card HARI prepares, and the basis the deciding person writes
+    scorecard: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    decision_basis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Spec 2.0 §10: the applicant's own deletion request, a lawyer's hold, and when personal data was removed
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    legal_hold: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ApplicationCounter(Base):
@@ -349,3 +366,80 @@ class ApplicationCounter(Base):
 
     period: Mapped[str] = mapped_column(String(7), primary_key=True)  # 2026-11
     last: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# --------------------------------------------------------------------------- spec 2.0: automation records
+
+class ResponseItem(Base):
+    """Something HARI delivered to one person that needs their answer (spec 2.0 §19).
+    The no-reply rule reads only this: who, since when, whether delivery is confirmed, what was already done."""
+
+    __tablename__ = "response_items"
+    __table_args__ = (UniqueConstraint("kind", "ref_id", "employee_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id"))
+    kind: Mapped[str] = mapped_column(String(20))  # case | step
+    ref_id: Mapped[str] = mapped_column(String(36))
+    title: Mapped[str] = mapped_column(String(300))  # HARI's own words, safe to show the manager
+    about_employee_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # never escalated to them
+    delivery_status: Mapped[str] = mapped_column(String(12), default="unknown")  # confirmed | unknown
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivery_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    agreed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminder_count: Mapped[int] = mapped_column(Integer, default=0)
+    manager_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    digest_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    state: Mapped[str] = mapped_column(String(12), default="open")  # open | resolved
+    last_result: Mapped[str] = mapped_column(String(20), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DigestItem(Base):
+    """One line for the owner's daily digest: a fact, its effect, who owns it and by when (spec 2.0 §20, §28)."""
+
+    __tablename__ = "digest_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    key: Mapped[str] = mapped_column(String(120), unique=True)  # the same event is listed once
+    kind: Mapped[str] = mapped_column(String(30))
+    priority: Mapped[int] = mapped_column(Integer, default=50)  # lower = first
+    fact: Mapped[str] = mapped_column(Text)
+    impact: Mapped[str] = mapped_column(Text, default="")
+    responsible: Mapped[str] = mapped_column(String(200), default="")
+    due: Mapped[str] = mapped_column(String(100), default="")
+    about_employee_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # not shown to this person
+    about_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    sent_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class Approval(Base):
+    """A one-time approval tied to one exact action (spec 2.0 §25): who, what, on whom, the payload hash,
+    the version it was made against, and when it runs out."""
+
+    __tablename__ = "approvals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    nonce: Mapped[str] = mapped_column(String(64), unique=True)
+    actor_id: Mapped[str] = mapped_column(String(36))
+    action_type: Mapped[str] = mapped_column(String(40))
+    subject_id: Mapped[str] = mapped_column(String(60))
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    source_version: Mapped[str] = mapped_column(String(40), default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class IntegrationStatus(Base):
+    """Health of an outside source (spec 2.0 §9). While one is down its data is "unknown", never "absent"."""
+
+    __tablename__ = "integration_status"
+
+    name: Mapped[str] = mapped_column(String(40), primary_key=True)
+    healthy: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_ok_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(200), nullable=True)

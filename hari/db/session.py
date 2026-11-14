@@ -1,11 +1,14 @@
-"""Engine and sessions. The schema creates itself on start (no migration step)."""
+"""Engine and sessions. The schema creates itself on start: missing tables are created, and a column a
+model gained later is added to its existing table in place (no separate migration step)."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from sqlalchemy import event, text
+from loguru import logger
+from sqlalchemy import event, inspect, text
+from sqlalchemy.schema import CreateColumn
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from hari.config import normalize_database_url, settings
@@ -45,6 +48,29 @@ async def create_schema() -> None:
     assert _engine is not None
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(add_missing_columns)
+
+
+def add_missing_columns(conn) -> list[str]:  # noqa: ANN001 — a sync connection inside run_sync
+    """`create_all` never alters a table that already exists. Add the columns the models gained since it
+    was made. Such a column must allow NULL, so the rows already there stay valid."""
+    added: list[str] = []
+    inspector = inspect(conn)
+    for table in Base.metadata.sorted_tables:
+        if not inspector.has_table(table.name):
+            continue  # `create_all` makes whole tables; this only fills in columns
+        have = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in have:
+                continue
+            if not column.nullable:
+                raise RuntimeError(f"{table.name}.{column.name}: a column added later must allow NULL")
+            ddl = str(CreateColumn(column).compile(dialect=conn.dialect)).strip()
+            conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN {ddl}'))
+            added.append(f"{table.name}.{column.name}")
+    if added:
+        logger.info("Schema: added columns {}", ", ".join(added))
+    return added
 
 
 async def ping() -> bool:

@@ -80,6 +80,12 @@ async def apply_to_the_end(h: ApplyHarness, tg: int = APPLICANT, *, link: str = 
     return await h.say(tg, "Иккинчи жавоб")
 
 
+async def reject(h: ApplyHarness, tg: int, basis: str = "Иш намунаси мезони бўйича далил етарли эмас") -> list[str]:
+    """A rejection is the button and then the written basis (spec 2.0 §14)."""
+    await h.press(tg, btn(h, tg, "Рад этиш"))
+    return await h.say(tg, basis)
+
+
 @pytest.fixture
 async def h_apply_done(h_apply):
     await apply_to_the_end(h_apply)
