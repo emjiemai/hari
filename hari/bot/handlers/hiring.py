@@ -24,9 +24,8 @@ from hari.apply.texts import BTN_HOLD, BTN_PURGE, STATUS_LABELS, t
 from hari.apply.vacancies import title_for
 from hari.bot import texts as T
 from hari.bot.common import staff_by_tg
-from hari.bot.handlers import staff
+from hari.bot.handlers import people, staff
 from hari.bot.ui import AppActCb, RoleCb, inline, notify
-from hari.config import settings
 from hari.db.models import Application, Approval, Employee, Vacancy
 from hari.db.session import session_scope
 
@@ -255,15 +254,10 @@ async def role_request(message: Message, command: CommandObject) -> None:
             await message.answer(T.say(actor, "Ходим топилмади."))
             return
         try:
-            approval = await owners.request_role_change(session, actor, target.id, parts[1].lower())
+            text, buttons = await people.role_draft(session, actor, target, parts[1].lower())
         except owners.RoleError as exc:
             await message.answer(T.say(actor, str(exc)))
             return
-        text = (f"Роль ўзгариши лойиҳаси: {target.code} {target.full_name}\n"
-                f"{staff.ROLE_LABELS.get(target.role, target.role)} → {staff.ROLE_LABELS.get(parts[1].lower(), parts[1])}\n\n"
-                f"Тасдиқ фақат шу ўзгариш учун, бир марта ва {settings.approval_ttl_minutes} дақиқа амал қилади.")
-        buttons = inline([[("Тасдиқлаш", RoleCb(action="ok", emp_id=approval.id, role=parts[1].lower())),
-                           ("Бекор", RoleCb(action="no", emp_id=approval.id))]])
     await message.answer(T.say(actor, text), reply_markup=buttons)
 
 

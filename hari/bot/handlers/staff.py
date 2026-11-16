@@ -301,7 +301,7 @@ async def staff_list(message: Message) -> None:
                 prog = f", мослашув {done}/{total}"
             mark = "✅" if p.telegram_user_id else "⏳"
             lines.append(f"{mark} {p.code} {p.full_name} — {p.position}, {ROLE_LABELS.get(p.role, p.role)}{prog}")
-    lines.append("\nЯнги ҳавола: /taklif E-0003")
+    lines.append("\nПрофил ва ўзгартириш: /profil E-0003\nЯнги ҳавола: /taklif E-0003")
     await message.answer("\n".join(lines)[:4000])
 
 

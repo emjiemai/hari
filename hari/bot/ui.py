@@ -69,6 +69,21 @@ class RoleCb(CallbackData, prefix="rl"):
     role: str = ""
 
 
+class PersonCb(CallbackData, prefix="pe"):
+    """Buttons under an employee's profile card: pos | dept | role."""
+
+    action: str
+    emp_id: str
+
+
+class JoinCb(CallbackData, prefix="jn"):
+    """Under the report about someone without a card who opened the bot: add."""
+
+    action: str
+    tg: int
+    lang: str = "uz_cyrl"  # from their Telegram app, so the new card starts in a language they read
+
+
 class PickCb(CallbackData, prefix="pk"):
     field: str  # role | manager | mentor | lang | confirm | mylang
     value: str

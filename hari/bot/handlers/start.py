@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from hari.bot import texts as T
 from hari.bot.common import handles_work, staff_by_tg
+from hari.bot.handlers.people import report_join, report_stranger
 from hari.bot.ui import apply_button, main_menu
 from hari.db.models import Employee
 from hari.db.session import session_scope
@@ -28,7 +29,7 @@ async def _welcome(message: Message, emp: Employee) -> None:
 
 
 @router.message(CommandStart(deep_link=True))
-async def start_with_token(message: Message, command: CommandObject, state: FSMContext) -> None:
+async def start_with_token(message: Message, command: CommandObject, state: FSMContext, bot: Bot) -> None:
     await state.clear()
     token = (command.args or "").strip()
     try:
@@ -36,12 +37,15 @@ async def start_with_token(message: Message, command: CommandObject, state: FSMC
             emp = await bind_telegram(session, token, message.from_user.id)
     except BindError as exc:
         await message.answer(T.INVITE_TAKEN if str(exc) == "account_taken" else T.INVITE_INVALID)
+        if str(exc) != "account_taken":
+            await report_stranger(bot, message.from_user, " (ишламайдиган ҳавола билан)")
         return
     await _welcome(message, emp)
+    await report_join(bot, emp.id)
 
 
 @router.message(CommandStart())
-async def start_plain(message: Message, state: FSMContext) -> None:
+async def start_plain(message: Message, state: FSMContext, bot: Bot) -> None:
     await state.clear()
     async with session_scope() as session:
         user = message.from_user
@@ -49,6 +53,7 @@ async def start_plain(message: Message, state: FSMContext) -> None:
         emp = await staff_by_tg(session, user.id)
     if emp is None:
         await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id), reply_markup=apply_button())
+        await report_stranger(bot, message.from_user)
         return
     await _welcome(message, emp)
 
