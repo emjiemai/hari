@@ -82,6 +82,7 @@ def _plan_text(emp: Employee, plan, today) -> tuple[str, list]:  # noqa: ANN001
 
 
 @router.message(F.text.in_(T.both(T.BTN_PLAN)))
+@router.message(Command("reja"))
 async def show_plan(message: Message, state: FSMContext) -> None:
     await state.clear()
     async with session_scope() as session:
@@ -194,6 +195,7 @@ def _case_type_buttons(emp: Employee):  # noqa: ANN202
 
 
 @router.message(F.text.in_(T.both(T.BTN_CASE)))
+@router.message(Command("murojaat"))
 async def case_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
     async with session_scope() as session:
@@ -337,6 +339,7 @@ async def _take_offer(message: Message, bot: Bot, telegram_user_id: int, state: 
 
 
 @router.message(F.text.in_(T.both(T.BTN_MY_CASES)))
+@router.message(Command("murojaatlarim"))
 async def my_cases(message: Message, state: FSMContext) -> None:
     await state.clear()
     async with session_scope() as session:
@@ -361,6 +364,7 @@ async def my_cases(message: Message, state: FSMContext) -> None:
 # --------------------------------------------------------------------------- profile
 
 @router.message(F.text.in_(T.both(T.BTN_PROFILE)))
+@router.message(Command("profilim"))
 async def profile(message: Message, state: FSMContext) -> None:
     await state.clear()
     async with session_scope() as session:

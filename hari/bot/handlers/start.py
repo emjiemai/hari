@@ -7,6 +7,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from hari.bot import commands
 from hari.bot import texts as T
 from hari.bot.common import handles_work, staff_by_tg
 from hari.bot.handlers.people import report_join, report_stranger
@@ -19,13 +20,14 @@ from hari.owners import claim_owner_name
 router = Router(name="start")
 
 
-async def _welcome(message: Message, emp: Employee) -> None:
+async def _welcome(message: Message, emp: Employee, bot: Bot) -> None:
     async with session_scope() as session:
         emp = await session.get(Employee, emp.id)
         manager = (await session.get(Employee, emp.manager_id)).full_name if emp.manager_id else None
         mentor = (await session.get(Employee, emp.mentor_id)).full_name if emp.mentor_id else None
         menu = main_menu(emp, await handles_work(session, emp))
     await message.answer(T.say(emp, T.welcome(emp, manager, mentor)), reply_markup=menu)
+    await commands.sync_for(bot, emp)  # the Menu button's list, for this person's role
 
 
 @router.message(CommandStart(deep_link=True))
@@ -40,7 +42,7 @@ async def start_with_token(message: Message, command: CommandObject, state: FSMC
         if str(exc) != "account_taken":
             await report_stranger(bot, message.from_user, " (ишламайдиган ҳавола билан)")
         return
-    await _welcome(message, emp)
+    await _welcome(message, emp, bot)
     await report_join(bot, emp.id)
 
 
@@ -55,7 +57,7 @@ async def start_plain(message: Message, state: FSMContext, bot: Bot) -> None:
         await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id), reply_markup=apply_button())
         await report_stranger(bot, message.from_user)
         return
-    await _welcome(message, emp)
+    await _welcome(message, emp, bot)
 
 
 @router.message(Command("bekor", "cancel"))

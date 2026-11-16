@@ -22,6 +22,7 @@ from hari.apply import rubric
 from hari.apply.report import report_buttons, report_parts, send_to, tell_applicant, vacancy_title
 from hari.apply.texts import BTN_HOLD, BTN_PURGE, STATUS_LABELS, t
 from hari.apply.vacancies import title_for
+from hari.bot import commands
 from hari.bot import texts as T
 from hari.bot.common import staff_by_tg
 from hari.bot.handlers import people, staff
@@ -262,7 +263,7 @@ async def role_request(message: Message, command: CommandObject) -> None:
 
 
 @router.callback_query(RoleCb.filter(F.action.in_({"ok", "no"})))
-async def role_confirm(query: CallbackQuery, callback_data: RoleCb) -> None:
+async def role_confirm(query: CallbackQuery, callback_data: RoleCb, bot: Bot) -> None:
     if callback_data.action == "no":
         await query.message.edit_reply_markup(reply_markup=None)
         await query.answer(T.CANCELLED)
@@ -290,3 +291,4 @@ async def role_confirm(query: CallbackQuery, callback_data: RoleCb) -> None:
     await query.answer()
     await query.message.edit_reply_markup(reply_markup=None)
     await query.message.answer(T.say(actor, done))
+    await commands.sync_for(bot, target)  # their Menu list follows the new role

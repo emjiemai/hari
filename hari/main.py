@@ -22,7 +22,7 @@ from loguru import logger
 
 from hari import scheduler
 from hari.apply.vacancies import seed_vacancies
-from hari.bot import common
+from hari.bot import commands, common
 from hari.bot.handlers import apply, employee, hiring, people, staff, start
 from hari.bot.middleware import DedupeMiddleware
 from hari.config import WEBHOOK_PATH, settings
@@ -159,6 +159,7 @@ async def main() -> None:
         common.bot_username = me.username or ""
         logger.info("HARI is running as @{} ({} mode)", common.bot_username, mode)
         dp = build_dispatcher()
+        menu = asyncio.create_task(commands.install(bot))  # noqa: F841 — the Menu button list, in the background
         await (run_webhook(bot, dp) if mode == "webhook" else run_polling(bot, dp))
     finally:
         await bot.session.close()

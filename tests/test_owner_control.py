@@ -127,3 +127,45 @@ async def test_hr_edits_position_but_sees_no_role_button_and_employees_see_nothi
 async def test_staff_list_points_to_the_profile_command(h):
     replies = await h.say(OWNER, "/xodimlar")
     assert re.search(r"/profil E-\d{4}", replies[0])
+
+
+# --------------------------------------------------------------------------- the Menu button's command list
+
+def _menus(h: Harness) -> dict[int, list[str]]:
+    """Wrap the fake Telegram so the command lists HARI sets are recorded per chat."""
+    from aiogram.methods import DeleteMyCommands, SetMyCommands
+
+    menus: dict[int, list[str]] = {}
+    real = h.session.make_request
+
+    async def record(bot, method, timeout=None):  # noqa: ANN001, ANN202
+        if isinstance(method, SetMyCommands):
+            menus[getattr(method.scope, "chat_id", 0)] = [c.command for c in method.commands]
+        if isinstance(method, DeleteMyCommands):
+            menus[getattr(method.scope, "chat_id", 0)] = []
+        return await real(bot, method, timeout)
+
+    h.session.make_request = record
+    return menus
+
+
+async def test_each_person_gets_the_menu_for_their_role(h, session_scope):
+    from hari.bot import commands
+
+    menus = _menus(h)
+    await commands.install(h.bot)
+    assert menus[0] == ["start", "help"]  # strangers and applicants
+    assert "yangi" not in menus[MENTOR] and "reja" in menus[MENTOR] and "rol" not in menus[MENTOR]
+    assert {"yangi", "xodimlar", "profil", "taklif"} <= set(menus[HR]) and "rol" not in menus[HR]
+    assert "rol" in menus[OWNER]
+
+    await h.say(OWNER, "/rol E-0003 hr")
+    await h.press(OWNER, btn(h, OWNER, "Тасдиқлаш"))
+    assert "xodimlar" in menus[MENTOR]  # the list follows the new role
+
+
+async def test_menu_commands_open_the_same_screens_as_the_buttons(h):
+    assert "мослашув режаси бириктирилмаган" in (await h.say(MENTOR, "/reja"))[0]
+    assert "ID: E-0003" in (await h.say(MENTOR, "/profilim"))[0]
+    assert (await h.say(MENTOR, "/murojaat"))[0] == "Мурожаат турини танланг:"
+    assert (await h.say(HR, "/navbat"))[0] == "Иш навбатингиз бўш."

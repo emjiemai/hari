@@ -26,6 +26,7 @@ from hari import onboarding as O
 from hari.access import can_manage_employees, is_staff
 from hari.apply.report import vacancy_title
 from hari.apply.texts import STATUS_LABELS as APP_STATUS
+from hari.bot import commands
 from hari.bot import texts as T
 from hari.bot.common import handles_work, staff_by_tg
 from hari.bot.handlers.staff import ROLE_LABELS
@@ -438,3 +439,5 @@ async def add_confirm(query: CallbackQuery, callback_data: PickCb, state: FSMCon
     except TelegramAPIError as exc:
         logger.warning("Welcome to a new card not delivered: {}", type(exc).__name__)
         await query.message.answer("Ходимга хабар етмади: у HARI'ни қайта очиб /start босиши керак.")
+        return
+    await commands.sync_for(bot, emp)

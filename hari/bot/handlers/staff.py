@@ -308,6 +308,7 @@ async def staff_list(message: Message) -> None:
 # --------------------------------------------------------------------------- work queue
 
 @router.message(F.text.in_(T.both(T.BTN_QUEUE)))
+@router.message(Command("navbat"))
 async def work_queue(message: Message, bot: Bot) -> None:
     async with session_scope() as session:
         me = await staff_by_tg(session, message.from_user.id)
