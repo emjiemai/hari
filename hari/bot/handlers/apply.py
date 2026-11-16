@@ -157,7 +157,7 @@ async def apply_link(message: Message, command: CommandObject, state: FSMContext
         app, created = await A.start_or_resume(session, tg, command.args)
         app_id = app.id
     if created:
-        logger.info("Application started from {}", command.args)
+        logger.info("Application started ({})", "vacancy link" if command.args else "no link")
     await show_step(message, bot, app_id)
 
 

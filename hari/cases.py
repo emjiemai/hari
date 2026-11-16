@@ -176,8 +176,15 @@ async def get_by_number(session: AsyncSession, number: str) -> HRCase | None:
     return (await session.execute(select(HRCase).where(HRCase.number == number))).scalar_one_or_none()
 
 
+def can_see_case(actor: Employee, case: HRCase) -> bool:
+    """A handler may see a case; a sensitive one only its own assignee (or the owner) may see.
+    The same rule for the work queue and for every action, so a forged button cannot open someone else's."""
+    return (can_handle_case(actor, case.assignee_id, case.about_employee_id, case.about_role)
+            and (case.assignee_id == actor.id or case.privacy == "normal" or actor.role == "owner"))
+
+
 async def _require_handler(session: AsyncSession, actor: Employee, case: HRCase, action: str) -> None:
-    if not can_handle_case(actor, case.assignee_id, case.about_employee_id, case.about_role):
+    if not can_see_case(actor, case):
         await audit.record(session, f"case.{action}", "denied", actor_id=actor.id, object_type="case",
                            object_id=case.number)
         raise CaseError("not_allowed")
@@ -215,8 +222,7 @@ async def answer(session: AsyncSession, actor: Employee, case: HRCase, decision:
 async def open_for_handler(session: AsyncSession, actor: Employee) -> list[HRCase]:
     stmt = select(HRCase).where(HRCase.status.in_(("submitted", "accepted", "in_review", "decided")))
     rows = (await session.execute(stmt.order_by(HRCase.created_at))).scalars().all()
-    return [c for c in rows if can_handle_case(actor, c.assignee_id, c.about_employee_id, c.about_role)
-            and (c.assignee_id == actor.id or c.privacy == "normal" or actor.role == "owner")]
+    return [c for c in rows if can_see_case(actor, c)]
 
 
 async def mine(session: AsyncSession, requester: Employee, limit: int = 10) -> list[HRCase]:

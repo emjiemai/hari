@@ -28,13 +28,14 @@ MEMORY_EXCHANGES = 10  # earlier question/answer pairs the model sees with each 
 MAX_CHARS = 1500  # of each stored message
 
 
-async def recent(session: AsyncSession, emp: Employee, now: datetime) -> list[tuple[str, str, str]]:
-    """This person's last exchanges, oldest first: (their message, HARI's reply, Tashkent date/time)."""
+async def recent(session: AsyncSession, emp: Employee, now: datetime) -> list[tuple[str, str, str, datetime]]:
+    """This person's last exchanges, oldest first: (their message, HARI's reply, Tashkent date/time, UTC time)."""
     since = now - timedelta(days=settings.chat_memory_days)
     rows = (await session.execute(
         select(ChatTurn).where(ChatTurn.employee_id == emp.id, ChatTurn.at >= since)
         .order_by(ChatTurn.at.desc()).limit(MEMORY_EXCHANGES))).scalars().all()
-    return [(r.question, r.answer, local(as_utc(r.at)).strftime("%Y-%m-%d %H:%M")) for r in reversed(rows)]
+    return [(r.question, r.answer, local(as_utc(r.at)).strftime("%Y-%m-%d %H:%M"), as_utc(r.at))
+            for r in reversed(rows)]
 
 
 async def remember(session: AsyncSession, emp: Employee, question: str, answer: str, now: datetime) -> None:

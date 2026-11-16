@@ -229,7 +229,8 @@ async def ne_confirm(query: CallbackQuery, callback_data: PickCb, state: FSMCont
     try:
         async with session_scope() as session:
             hr = await _hr(query, session)
-            if hr is None:
+            # The role comes from a button, which a client can forge: only an owner may make an owner.
+            if hr is None or data.get("role") not in ROLE_LABELS or (data["role"] == "owner" and hr.role != "owner"):
                 await query.message.answer(T.NOT_ALLOWED)
                 return
             start = date.fromisoformat(data["start_date"])

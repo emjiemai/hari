@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 
 from hari.config import settings
+from hari.translit import cyrillic_to_latin, latin_to_cyrillic
 
 MASK = "[шахсий маълумот яширилди]"
 TRAIT = "[ишга алоқасиз маълумот олиб ташланди]"
@@ -22,14 +23,15 @@ TRAIT = "[ишга алоқасиз маълумот олиб ташланди]"
 _IDENTIFIERS = [
     re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"),  # e-mail
     re.compile(r"(?<![\w@])@[A-Za-z][A-Za-z0-9_]{4,31}\b"),  # Telegram name
-    re.compile(r"\b(?:\d[ -]?){16}\b"),  # card number
-    re.compile(r"\b\d{20}\b"),  # bank account
-    re.compile(r"\b\d{14}\b"),  # PINFL
-    re.compile(r"\b[A-Z]{2} ?\d{7}\b"),  # passport
-    re.compile(r"(?<!\d)\+?998[ \-()]*\d{2}[ \-()]*\d{3}[ \-]*\d{2}[ \-]*\d{2}(?!\d)"),  # +998 90 123 45 67
-    re.compile(r"(?<!\d)\(?\d{2}\)?[ \-]\d{3}[ \-]\d{2}[ \-]\d{2}(?!\d)"),  # 90 123 45 67
-    re.compile(r"(?<!\d)\d{9}(?!\d)"),  # 901234567
+    re.compile(r"(?<!\d)\d{20}(?!\d)"),  # bank account
+    re.compile(r"(?<!\d)\d(?:[ -]?\d){15}(?!\d)"),  # card number
+    re.compile(r"(?<!\d)\d(?:[ -]?\d){13}(?!\d)"),  # PINFL, also typed in groups
+    # passport: AA1234567, aa 1234567, АА1234567 typed in Cyrillic
+    re.compile(r"(?<![\wЎўҚқҒғҲҳ])[A-ZА-ЯЁЎҚҒҲ]{2} ?\d{7}(?!\d)", re.IGNORECASE),
+    # phones: +998 90 123 45 67, 8 90 123 45 67, 90 1234567, 90.123.45.67, (90) 123-45-67, 901234567
+    re.compile(r"(?<!\d)(?:\+?998|8)?[ .\-()]*\d{2}[ .\-()]*\d{3}[ .\-]*\d{2}[ .\-]*\d{2}(?!\d)"),
     re.compile(r"(?<!\d)\+\d{10,15}(?!\d)"),  # any other international number
+    re.compile(r"(?<!\d)\d{1,2}[./]\d{1,2}[./](?:19|20)\d{2}(?!\d)"),  # a date of birth like 12.05.1990
 ]
 
 # Protected traits and their stand-ins (spec 2.0 §14). Matched in Cyrillic, Latin Uzbek and Russian.
@@ -59,13 +61,20 @@ _PROTECTED = [
 _PROTECTED_RE = re.compile("|".join(_PROTECTED), re.IGNORECASE)
 
 
+def _forms(value: str) -> set[str]:
+    """A name as it may be typed: as stored, in Latin and in Cyrillic ("Алиев Вали", "Aliev Vali")."""
+    return {value, cyrillic_to_latin(value), latin_to_cyrillic(value)}
+
+
 def scrub(text: str, known: tuple[str, ...] | list[str] = ()) -> str:
-    """Mask identifiers. `known` are strings the caller knows identify a person (a full name, a phone)."""
-    for value in sorted({k.strip() for k in known if k and len(k.strip()) >= 3}, key=len, reverse=True):
+    """Mask identifiers. `known` are strings the caller knows identify a person (full names, a phone).
+    A name is masked in either script and with Uzbek or Russian endings: "Валига", "Valining", "Вали ака"."""
+    values = {f.strip() for k in known if k and len(k.strip()) >= 3 for f in _forms(k.strip())}
+    for value in sorted(values, key=len, reverse=True):
         text = re.sub(re.escape(value), MASK, text, flags=re.IGNORECASE)
         for word in value.split():  # the name's parts on their own: "Вали" from "Алиев Вали"
             if len(word) >= 4 and not word.isdigit():
-                text = re.sub(rf"(?<!\w){re.escape(word)}(?!\w)", MASK, text, flags=re.IGNORECASE)
+                text = re.sub(rf"(?<!\w){re.escape(word)}\w{{0,8}}", MASK, text, flags=re.IGNORECASE)
     for pattern in _IDENTIFIERS:
         text = pattern.sub(MASK, text)
     return text

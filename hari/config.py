@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     retention_rejected_days: int | None = None
     # Days HARI remembers each person's own chat with it (hari.memory); older exchanges are deleted.
     chat_memory_days: int = 30
+    # Key that encrypts personal text in the database (hari.crypto). Empty = stored as plain text.
+    data_encryption_key: SecretStr = SecretStr("")
+    # Ask OpenRouter for AI providers that neither store nor train on the prompts.
+    llm_deny_data_collection: bool = True
     # disabled — phones, e-mails, document numbers and the person's name are masked before any AI request.
     # allowed  — only after the lawyer accepts the AI provider (§10).
     external_personal_data_egress: str = "disabled"
@@ -130,6 +134,8 @@ class Settings(BaseSettings):
             missing.append("LLM_DAILY_CALL_LIMIT")
         if not self.retention_policy_version or self.retention_rejected_days is None:
             missing.append("RETENTION_POLICY_VERSION")
+        if not self.data_encryption_key.get_secret_value().strip():
+            missing.append("DATA_ENCRYPTION_KEY")  # personal text is then stored unencrypted
         return missing
 
     @property

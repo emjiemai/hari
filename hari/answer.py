@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import date
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hari import egress
@@ -132,7 +133,8 @@ def source_line(hits: list[Hit]) -> str:
     seen: list[str] = []
     for h in hits:
         if h.doc_id.startswith(EXAMPLE_DOC_PREFIX):
-            label = f"HARI савол-жавоб намунаси «{h.section}» ({h.version}-версия)"
+            # The approved HR guide, by topic: employees see what it is about, not internal example ids.
+            label = f"HR йўриқномаси — {_topic(h.title)}"
         else:
             label = f"«{h.title}», {h.version}-версия" + (
                 f", «{h.section}» бўлими" if h.section and h.section != h.title else "")
@@ -179,13 +181,15 @@ def strip_source(text: str) -> str:
     return text.split("\n\nМанба:", 1)[0].strip()
 
 
-def _history_block(emp: Employee, history: list[tuple] | None) -> str:
+def _history_block(emp: Employee, history: list[tuple] | None, known: tuple[str, ...] = ()) -> str:
     """Earlier exchanges of this person's chat, oldest first: (their message, HARI's reply[, when]).
     The person's words are masked like the question."""
     turns = []
     for item in history or []:
         q, a = item[0], item[1]
-        turn = {"person": egress.outbound(q[:600], known=(emp.full_name,)), "hari": strip_source(a)[:600]}
+        # Masked first, then shortened: a cut must never leave half a phone number in the clear.
+        turn = {"person": egress.outbound(q, known=known)[:600],
+                "hari": egress.outbound(strip_source(a), known=known)[:600]}
         if len(item) > 2:
             turn = {"at": item[2]} | turn
         turns.append(turn)
@@ -196,7 +200,8 @@ def _history_block(emp: Employee, history: list[tuple] | None) -> str:
 
 
 def build_user_message(emp: Employee, question: str, hits: list[Hit], examples: dict[str, Hit] | None = None,
-                       history: list[tuple] | None = None) -> str:
+                       history: list[tuple] | None = None, names: list[str] | None = None) -> str:
+    """`names`: every staff name, so a colleague named in the message is masked too, not only the sender."""
     sources = [
         {"id": h.chunk_id, "document": h.title, "version": h.version, "section": h.section,
          "type": h.source_type or "", "text": h.text}
@@ -208,12 +213,13 @@ def build_user_message(emp: Employee, question: str, hits: list[Hit], examples: 
     playbook = [{"topic": t, "items": items} for t, items in topics.items()]
     versions = [f"{h.doc_id}:{h.version}" for h in list(hits) + list((examples or {}).values())]
     # The person's own words are the only part that can carry their or someone else's identifiers.
-    asked = egress.outbound(question[:2000], known=(emp.full_name,))
+    known = (emp.full_name, *(names or []))
+    asked = egress.outbound(question, known=known)[:2000]
     return (
         f"RUNTIME CONTEXT (set by the server): {runtime_context(emp, versions)}\n\n"
         f"SOURCES:\n<<<SOURCES\n{json.dumps(sources, ensure_ascii=False, indent=1)}\nSOURCES>>>\n\n"
         f"EXAMPLES:\n<<<EXAMPLES\n{json.dumps(playbook, ensure_ascii=False, separators=(',', ':'))}\nEXAMPLES>>>\n\n"
-        f"{_history_block(emp, history)}"
+        f"{_history_block(emp, history, known)}"
         f"QUESTION:\n<<<QUESTION\n{asked}\nQUESTION>>>"
     )
 
@@ -265,7 +271,8 @@ async def _answer(session: AsyncSession, emp: Employee, question: str, today: da
 
     system = with_base(SYSTEM_PROMPT % {"language": LANG_NAMES.get(emp.language, LANG_NAMES["uz_cyrl"])})
     try:
-        reply = await llm.complete_json(system, build_user_message(emp, question, hits, examples, history))
+        names = list((await session.execute(select(Employee.full_name))).scalars())
+        reply = await llm.complete_json(system, build_user_message(emp, question, hits, examples, history, names))
     except LLMUnavailable:
         return await without_model()
 

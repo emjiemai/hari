@@ -208,7 +208,8 @@ async def test_model_gets_every_readable_example_and_answers_new_wording(with_ex
     # Worded nothing like the example, and no search word in common with it
     result = await ask(session_scope, with_examples, "bekor o'tiribman, nima qilay?", today, llm)
     assert result.outcome == "answered" and len(llm.calls) == 1
-    assert "Манба: HARI савол-жавоб намунаси «Менда иш йўқ. Ўзинг бирор вазифа бер.»" in result.text
+    assert "Манба: HR йўриқномаси — Вазифа бериш" in result.text
+    assert "намунаси" not in result.text and "версия" not in result.text  # no internal wording
 
 
 async def test_chat_reply_needs_no_source_but_a_rule_like_answer_does(with_examples, session_scope, today):

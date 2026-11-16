@@ -33,7 +33,8 @@ def configure(url: str | None = None) -> AsyncEngine:
             from sqlalchemy.pool import StaticPool
 
             kwargs["poolclass"] = StaticPool
-    _engine = create_async_engine(url, **kwargs)
+    # hide_parameters: a failed query's error text never carries the values (chat text, names) into the logs.
+    _engine = create_async_engine(url, hide_parameters=True, **kwargs)
     if url.startswith("sqlite"):
         @event.listens_for(_engine.sync_engine, "connect")
         def _fk_on(dbapi_conn, _record):  # noqa: ANN001 — SQLite enforces foreign keys only when asked

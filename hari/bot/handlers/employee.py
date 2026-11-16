@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction
 from aiogram.filters import Command, StateFilter
@@ -142,7 +144,8 @@ async def ask_proof(query: CallbackQuery, callback_data: StepCb, state: FSMConte
     async with session_scope() as session:
         emp = await staff_by_tg(session, query.from_user.id)
         step = await session.get(O.OnboardingStep, callback_data.step_id)
-    if emp is None or step is None:
+        plan = await session.get(O.OnboardingPlan, step.plan_id) if step is not None else None
+    if emp is None or plan is None or plan.employee_id != emp.id:  # only a step of one's own plan
         await query.answer(T.NOT_ALLOWED, show_alert=True)
         return
     await state.set_state(AskProof.waiting)
@@ -410,6 +413,9 @@ async def helpful(query: CallbackQuery, callback_data: HelpfulCb) -> None:
     await query.message.edit_reply_markup(reply_markup=None)
 
 
+FOLLOW_UP_MINUTES = 10  # a short reply joins the previous message in a request only within this time
+
+
 @router.message(Command("unut", "forget"))
 async def forget_chat(message: Message, state: FSMContext) -> None:
     """The person erases what HARI remembers of their own chat (requests they opened stay)."""
@@ -450,10 +456,12 @@ async def question(message: Message, state: FSMContext, bot: Bot) -> None:
         if result.outcome not in ("rule", "paused"):
             # A topic with a fixed safety reply is not kept: it must never reach the AI later either.
             await memory.remember(session, emp, message.text, result.text, now_utc())
-    # What a request opened from here will say: the message, and the one before it when this is a short
-    # follow-up ("I told you, my head hurts" means little to HR on its own).
+    # What a request opened from here will say: the message, and the one just before it when this is a
+    # short follow-up in the same conversation ("I told you, my head hurts" means little to HR on its own).
+    # Never an older message: the person did not choose to send last week's words to their manager.
     body = message.text
-    if result.outcome != "rule" and turns and len(message.text.split()) <= 6:
+    if (result.outcome != "rule" and turns and len(message.text.split()) <= 6
+            and now_utc() - turns[-1][3] <= timedelta(minutes=FOLLOW_UP_MINUTES)):
         body = f"{turns[-1][0]}\n{message.text}"
     await state.update_data(offer=result.offer_case, last_question=body if result.offer_case else None)
     if result.auto_case and not settings.hari_paused:

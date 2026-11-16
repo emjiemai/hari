@@ -13,12 +13,12 @@ import secrets
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hari import audit
 from hari.config import settings
-from hari.db.models import LANGUAGES, ROLES, Employee, Invite, as_utc
+from hari.db.models import LANGUAGES, ROLES, ChatTurn, Employee, Invite, as_utc
 from hari.translit import normalize
 from hari.worktime import now_utc, today_local
 
@@ -128,6 +128,10 @@ async def bind_telegram(session: AsyncSession, token: str, telegram_user_id: int
     if other is not None:
         await audit.record(session, "invite.use", "account_taken", object_type="employee", object_id=emp.id)
         raise BindError("account_taken")
+    if emp.telegram_user_id not in (None, telegram_user_id):
+        # A different Telegram account takes over this card: it must not see the previous holder's chat.
+        await session.execute(delete(ChatTurn).where(ChatTurn.employee_id == emp.id))
+        await audit.record(session, "invite.use", "rebound", object_type="employee", object_id=emp.id)
     emp.telegram_user_id = telegram_user_id
     emp.identity_verified_at = now
     if emp.status == "preparing" and emp.start_date and emp.start_date <= today_local(now):

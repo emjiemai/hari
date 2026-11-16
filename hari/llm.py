@@ -57,6 +57,8 @@ class LLMClient:
                             "response_format": {"type": "json_object"},
                             "temperature": 0.1,
                             "max_tokens": max_tokens,
+                            # Only providers that do not keep or train on the prompts (OpenRouter routing).
+                            **({"provider": {"data_collection": "deny"}} if settings.llm_deny_data_collection else {}),
                         },
                     )
                     if resp.status_code != 200:

@@ -15,6 +15,7 @@ import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import ErrorEvent
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from loguru import logger
@@ -32,12 +33,20 @@ from hari.owners import ensure_owners
 _dispatcher: Dispatcher | None = None
 
 
+async def _log_error(event: ErrorEvent) -> bool:
+    """A failed update is logged by its kind and id only: never the message, its sender or a traceback
+    with values in it (Render keeps the logs)."""
+    logger.error("Update {} failed: {}", event.update.update_id, type(event.exception).__name__)
+    return True
+
+
 def build_dispatcher() -> Dispatcher:
     """One dispatcher per process: aiogram routers can be attached to a single parent only."""
     global _dispatcher
     if _dispatcher is None:
         dp = Dispatcher(storage=MemoryStorage())
         dp.update.outer_middleware(DedupeMiddleware())
+        dp.errors.register(_log_error)
         dp.include_router(apply.router)  # first: applicants; its filters pass staff and strangers through
         dp.include_router(start.router)
         dp.include_router(staff.router)
@@ -63,6 +72,8 @@ async def prepare() -> None:
         logger.warning("Refused {}: {}", name, why)
     if not settings.openrouter_api_key.get_secret_value():
         logger.warning("OPENROUTER_API_KEY is empty: answers use the approved excerpt only (no AI text)")
+    if not settings.data_encryption_key.get_secret_value().strip():
+        logger.warning("DATA_ENCRYPTION_KEY is empty: personal text is stored in the database unencrypted")
 
 
 # --------------------------------------------------------------------------- web server (webhook mode)
@@ -130,9 +141,10 @@ async def run_polling(bot: Bot, dp: Dispatcher) -> None:
 
 async def main() -> None:
     logger.remove()
-    logger.add(sys.stderr, level="INFO")
+    logger.add(sys.stderr, level="INFO", diagnose=False, backtrace=False)  # no variable values in tracebacks
     if settings.log_file:
-        logger.add(settings.log_file, rotation="5 MB", retention=10, level="INFO", encoding="utf-8")
+        logger.add(settings.log_file, rotation="5 MB", retention=10, level="INFO", encoding="utf-8",
+                   diagnose=False, backtrace=False)
     token = settings.telegram_bot_token.get_secret_value()
     if not token:
         raise SystemExit("TELEGRAM_BOT_TOKEN is not set")

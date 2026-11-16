@@ -14,6 +14,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from hari.crypto import EncryptedText
+
 
 def new_id() -> str:
     return str(uuid.uuid4())
@@ -167,12 +169,12 @@ class OnboardingStep(Base):
     doc_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
     acceptor: Mapped[str] = mapped_column(String(20))  # self | mentor | manager | hr
     status: Mapped[str] = mapped_column(String(20), default="pending")
-    proof_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proof_text: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
     proof_file_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     accepted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    return_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    return_reason: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
 
     plan: Mapped[OnboardingPlan] = relationship(back_populates="steps")
 
@@ -195,12 +197,12 @@ class HRCase(Base):
     status: Mapped[str] = mapped_column(String(20), default="submitted")
     assignee_id: Mapped[str | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
     title: Mapped[str] = mapped_column(String(300))
-    body: Mapped[str] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(EncryptedText)
     # For complaints: who it is about — that person never handles it (spec §18)
     about_employee_id: Mapped[str | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
     # A complaint about a function, not one named person ("hr", "owner"): nobody in that role sees it (spec 2.0 §2)
     about_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    decision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
     first_response_due: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     first_response_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True)
@@ -218,7 +220,7 @@ class CaseEvent(Base):
     case_id: Mapped[str] = mapped_column(ForeignKey("hr_cases.id", ondelete="CASCADE"))
     actor_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     event: Mapped[str] = mapped_column(String(30))
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -299,8 +301,8 @@ class ChatTurn(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"), index=True)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
-    question: Mapped[str] = mapped_column(Text)
-    answer: Mapped[str] = mapped_column(Text)
+    question: Mapped[str] = mapped_column(EncryptedText)
+    answer: Mapped[str] = mapped_column(EncryptedText)
 
 
 # --------------------------------------------------------------------------- hiring
@@ -344,7 +346,7 @@ class Application(Base):
     full_name: Mapped[str] = mapped_column(String(200), default="")
     phone: Mapped[str] = mapped_column(String(20), default="")
     vacancy_id: Mapped[str | None] = mapped_column(ForeignKey("vacancies.id"), nullable=True)
-    experience: Mapped[str] = mapped_column(Text, default="")
+    experience: Mapped[str] = mapped_column(EncryptedText, default="")
     resume_file_id: Mapped[str | None] = mapped_column(String(300), nullable=True)  # "photo:<id>" | "document:<id>"
     source: Mapped[str] = mapped_column(String(40), default="apply")
     step: Mapped[str] = mapped_column(String(20), default="lang")
@@ -354,20 +356,20 @@ class Application(Base):
     job: Mapped[list] = mapped_column(JSON, default=list)  # [{"q", "a"}]
     job_origin: Mapped[str] = mapped_column(String(10), default="")  # vacancy | ai | fallback
     verdict: Mapped[str | None] = mapped_column(String(10), nullable=True)  # strong | maybe | weak
-    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
     answer_notes: Mapped[list] = mapped_column(JSON, default=list)
     ai_model: Mapped[str | None] = mapped_column(String(80), nullable=True)
     reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     decided_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     employee_id: Mapped[str | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
-    note: Mapped[str] = mapped_column(Text, default="")
+    note: Mapped[str] = mapped_column(EncryptedText, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     # Spec 2.0 §14: the evidence card HARI prepares, and the basis the deciding person writes
     scorecard: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    decision_basis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision_basis: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
     # Spec 2.0 §10: the applicant's own deletion request, a lawyer's hold, and when personal data was removed
     deletion_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     legal_hold: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

@@ -20,6 +20,9 @@ databases:
     plan: basic-256mb
     region: frankfurt
     postgresMajorVersion: "16"
+    # No connections from the internet: only services inside this Render account (the bot, over the
+    # private network) can reach the database. For admin access add one "/32" address here, then remove it.
+    ipAllowList: []
 
 services:
   - type: web
@@ -47,6 +50,10 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: WEBHOOK_SECRET
+        generateValue: true
+      # Encrypts personal text in the database (chats, requests, proofs, applicants' answers). Generated
+      # once by Render; never change or delete it, or the stored text can no longer be read.
+      - key: DATA_ENCRYPTION_KEY
         generateValue: true
       - key: KNOWLEDGE_DIR
         value: knowledge/samples  # switch to knowledge/docs when the real documents are in

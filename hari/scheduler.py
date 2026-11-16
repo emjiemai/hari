@@ -203,9 +203,12 @@ async def unreported(session: AsyncSession, now: datetime) -> list[str]:
 
 
 async def tick(bot: Bot, now: datetime | None = None) -> int:
+    now = now or now_utc()
+    async with session_scope() as session:
+        # Old chat memory is deleted even while paused: keeping private text longer is never the safe side.
+        await memory.purge_old(session, now)
     if settings.hari_paused:
         return 0  # the kill switch: no proactive message and no automatic change (T23)
-    now = now or now_utc()
     async with session_scope() as session:
         await activate_started(session, now)
         ids = await pending_retries(session, now)
@@ -216,7 +219,6 @@ async def tick(bot: Bot, now: datetime | None = None) -> int:
         ids += await digest.daily(session, now)
         ids += await digest.weekly(session, now)
         purged = await retention.run(session, now)
-        await memory.purge_old(session, now)
         reports = await unreported(session, now)
     if purged:
         logger.info("Retention: personal data removed from {} rejected applications", purged)
@@ -236,5 +238,5 @@ async def run_forever(bot: Bot) -> None:
         try:
             await tick(bot)
         except Exception as exc:  # noqa: BLE001 — one bad tick must not stop the timers
-            logger.exception("Scheduler tick failed: {}", exc)
+            logger.error("Scheduler tick failed: {}", type(exc).__name__)  # no values from the failed step
         await asyncio.sleep(TICK_SECONDS)
