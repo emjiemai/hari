@@ -32,7 +32,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hari import budget, digest, integrations, nonresponse, retention
+from hari import budget, digest, integrations, memory, nonresponse, retention
 from hari import onboarding as O
 from hari.bot import texts as T
 from hari.config import settings
@@ -216,6 +216,7 @@ async def tick(bot: Bot, now: datetime | None = None) -> int:
         ids += await digest.daily(session, now)
         ids += await digest.weekly(session, now)
         purged = await retention.run(session, now)
+        await memory.purge_old(session, now)
         reports = await unreported(session, now)
     if purged:
         logger.info("Retention: personal data removed from {} rejected applications", purged)

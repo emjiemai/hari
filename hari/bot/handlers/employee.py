@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import time
-
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction
-from aiogram.filters import StateFilter
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
@@ -16,7 +14,8 @@ from hari import cases as C
 from hari import digest, nonresponse
 from hari import onboarding as O
 from hari.access import can_read_document
-from hari.answer import HISTORY_TURNS, answer_question
+from hari import memory
+from hari.answer import answer_question
 from hari.guard import is_consent
 from hari.bot import texts as T
 from hari.bot.common import handles_work, staff_by_tg
@@ -322,7 +321,7 @@ async def offered_case(query: CallbackQuery, callback_data: OfferCaseCb, state: 
 async def _take_offer(message: Message, bot: Bot, telegram_user_id: int, state: FSMContext, slug: str,
                       question: str) -> None:
     """The person accepted the request HARI offered, by the button or by answering "yes"."""
-    await state.update_data(last_question=None, offer=None, chat=[])
+    await state.update_data(last_question=None, offer=None)
     if slug == "complaint":  # ask who it is about before it is routed anywhere (T16)
         async with session_scope() as session:
             emp = await staff_by_tg(session, telegram_user_id)
@@ -411,12 +410,17 @@ async def helpful(query: CallbackQuery, callback_data: HelpfulCb) -> None:
     await query.message.edit_reply_markup(reply_markup=None)
 
 
-CHAT_MEMORY_SECONDS = 30 * 60  # how long earlier turns stay in this chat's (in-memory) state
-
-
-def _recent_turns(data: dict) -> list[dict]:
-    cutoff = time.time() - CHAT_MEMORY_SECONDS
-    return [t for t in data.get("chat") or [] if t.get("t", 0) >= cutoff]
+@router.message(Command("unut", "forget"))
+async def forget_chat(message: Message, state: FSMContext) -> None:
+    """The person erases what HARI remembers of their own chat (requests they opened stay)."""
+    await state.update_data(offer=None, last_question=None)
+    async with session_scope() as session:
+        emp = await staff_by_tg(session, message.from_user.id)
+        if emp is None:
+            await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id), reply_markup=apply_button())
+            return
+        await memory.forget(session, emp)
+    await message.answer(T.say(emp, T.MEMORY_FORGOTTEN))
 
 
 @router.message(StateFilter(None), F.text)
@@ -426,27 +430,32 @@ async def question(message: Message, state: FSMContext, bot: Bot) -> None:
     if offer and offered_for and is_consent(message.text):
         # "ha", "tasdiqlayman", "yubor": the same as pressing the button HARI just showed.
         await _take_offer(message, bot, message.from_user.id, state, offer, offered_for)
+        ctype = C.CASE_TYPES.get(offer)
+        if ctype is not None and ctype.privacy == "normal":  # a complaint, pay or legal request is not kept
+            async with session_scope() as session:
+                emp = await staff_by_tg(session, message.from_user.id)
+                if emp is not None:
+                    await memory.remember(session, emp, message.text, f"«{ctype.label}» мурожаати очилди.",
+                                          now_utc())
         return
-    turns = _recent_turns(data)
     async with session_scope() as session:
         emp = await staff_by_tg(session, message.from_user.id)
         if emp is None:
             await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id), reply_markup=apply_button())
             return
         await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-        result = await answer_question(session, emp, message.text, today_local(),
-                                       history=[(t["q"], t["a"]) for t in turns])
+        # Only this person's own earlier messages: the employee comes from their verified Telegram account.
+        turns = await memory.recent(session, emp, now_utc())
+        result = await answer_question(session, emp, message.text, today_local(), history=turns)
+        if result.outcome not in ("rule", "paused"):
+            # A topic with a fixed safety reply is not kept: it must never reach the AI later either.
+            await memory.remember(session, emp, message.text, result.text, now_utc())
     # What a request opened from here will say: the message, and the one before it when this is a short
     # follow-up ("I told you, my head hurts" means little to HR on its own).
     body = message.text
     if result.outcome != "rule" and turns and len(message.text.split()) <= 6:
-        body = f"{turns[-1]['q']}\n{message.text}"
-    if result.outcome == "rule":
-        turns = []  # a sensitive topic: neither it nor what came before goes to the model later
-    else:
-        turns = (turns + [{"q": message.text[:600], "a": result.text[:800], "t": time.time()}])[-HISTORY_TURNS:]
-    # Kept only in the bot's memory (lost on restart), never in the database (the answer log holds no text).
-    await state.update_data(chat=turns, offer=result.offer_case, last_question=body if result.offer_case else None)
+        body = f"{turns[-1][0]}\n{message.text}"
+    await state.update_data(offer=result.offer_case, last_question=body if result.offer_case else None)
     if result.auto_case and not settings.hari_paused:
         # A stated wish to leave: HR gets the fact in HARI's own words, once a day at most — never the
         # message itself (spec 2.0 §18, T11). The reply above already told the person who sees it.

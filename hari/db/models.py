@@ -290,6 +290,19 @@ class AnswerLog(Base):
     was_helpful: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
+class ChatTurn(Base):
+    """One exchange of a person's own chat with HARI: what they wrote and what HARI replied (hari.memory).
+    Read only for that same employee; kept `chat_memory_days`, deleted earlier with /unut."""
+
+    __tablename__ = "chat_turns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str] = mapped_column(Text)
+
+
 # --------------------------------------------------------------------------- hiring
 
 APPLICATION_STATUSES = ("draft", "submitted", "interview", "rejected", "hired")

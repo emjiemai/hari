@@ -7,8 +7,10 @@ import json
 import re
 
 import pytest
+from sqlalchemy import select
 
 from hari import answer as A
+from hari.config import settings
 from hari.guard import is_consent
 from hari.knowledge.loader import load_directory
 from hari.llm import LLMReply
@@ -17,6 +19,7 @@ from tests.test_bot_flow import HR, MENTOR, Harness  # noqa: F401  (h fixture is
 from tests.test_bot_flow import h  # noqa: F401
 
 EMP = MENTOR  # an ordinary employee with no manager: a leave request goes to HR
+FRIEND = 505  # another employee of the same company
 
 
 class ScriptedLLM:
@@ -79,7 +82,60 @@ async def test_sensitive_rule_topic_is_not_carried_to_the_model(h, kb):  # noqa:
     await h.say(EMP, "раҳбаримдан шикоят қилмоқчиман")  # fixed reply, never sent to AI
     ScriptedLLM.calls.clear()
     await h.say(EMP, "Kasalman ertaga ham")
-    assert "шикоят" not in ScriptedLLM.calls[-1] and "<<<HISTORY" not in ScriptedLLM.calls[-1]
+    assert "шикоят" not in ScriptedLLM.calls[-1]
+    assert "Kasalman, ishga kelolmayman" in ScriptedLLM.calls[-1]  # the rest of the chat is still remembered
+
+
+async def test_memory_survives_a_restart(h, kb):  # noqa: F811
+    await h.say(EMP, "Kasalman, ishga kelolmayman")
+    restarted = Harness()  # a redeploy: the bot's in-memory state is gone, the database is not
+    await restarted.say(EMP, "boshim ogridi deb aytdimku")
+    assert "Kasalman, ishga kelolmayman" in ScriptedLLM.calls[-1]
+
+
+async def test_one_person_never_sees_another_persons_chat(h, kb, session_scope, staff):  # noqa: F811
+    async with session_scope() as s:
+        await staff(s, "Дўстов Жасур", tg=FRIEND)
+    await h.say(FRIEND, "Kasalman, xotinim bilan ajrashyapman, uyda muammo bor")
+    await h.say(EMP, "Kasalman, ishga kelolmayman")
+    mine = ScriptedLLM.calls[-1]
+    assert "ajrashyapman" not in mine and "<<<HISTORY" not in mine  # EMP's first message: nothing of the friend
+    await h.say(EMP, "boshim ogridi deb aytdimku")
+    assert "ajrashyapman" not in ScriptedLLM.calls[-1] and "Kasalman, ishga kelolmayman" in ScriptedLLM.calls[-1]
+    # ...and the friend's own memory is still theirs
+    await h.say(FRIEND, "ha tayyorlab yubor")
+    assert "ajrashyapman" in ScriptedLLM.calls[-1] and "ishga kelolmayman" not in ScriptedLLM.calls[-1]
+
+
+async def test_unut_erases_only_my_own_memory(h, kb, session_scope, staff):  # noqa: F811
+    async with session_scope() as s:
+        await staff(s, "Дўстов Жасур", tg=FRIEND)
+    await h.say(FRIEND, "Kasalman, uyda muammo bor")
+    await h.say(EMP, "Kasalman, ishga kelolmayman")
+    replies = await h.say(EMP, "/unut")
+    assert "ўчирдим" in replies[0]
+    await h.say(EMP, "Kasalman yana")
+    assert "<<<HISTORY" not in ScriptedLLM.calls[-1]
+    await h.say(FRIEND, "boshim ogridi deb aytdimku")
+    assert "uyda muammo bor" in ScriptedLLM.calls[-1]
+
+
+async def test_old_exchanges_are_forgotten_after_the_set_days(h, kb, session_scope):  # noqa: F811
+    from datetime import timedelta
+
+    from hari import memory
+    from hari.db.models import ChatTurn
+    from hari.worktime import now_utc
+
+    await h.say(EMP, "Kasalman, ishga kelolmayman")
+    async with session_scope() as s:
+        for turn in (await s.execute(select(ChatTurn))).scalars():
+            turn.at = now_utc() - timedelta(days=settings.chat_memory_days + 1)
+    await h.say(EMP, "Kasalman bugun ham")
+    assert "<<<HISTORY" not in ScriptedLLM.calls[-1]
+    async with session_scope() as s:
+        assert await memory.purge_old(s, now_utc()) == 1  # the old one; the new exchange stays
+        assert len((await s.execute(select(ChatTurn))).scalars().all()) == 1
 
 
 @pytest.mark.parametrize("text", ["ha", "Ha, tasdiqlayman", "tasdiqlayman", "xo'p", "mayli", "ok", "да",

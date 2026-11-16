@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     # Retention (§10): nothing is deleted by timer until a lawyer-approved policy version and days are set.
     retention_policy_version: str = ""
     retention_rejected_days: int | None = None
+    # Days HARI remembers each person's own chat with it (hari.memory); older exchanges are deleted.
+    chat_memory_days: int = 30
     # disabled — phones, e-mails, document numbers and the person's name are masked before any AI request.
     # allowed  — only after the lawyer accepts the AI provider (§10).
     external_personal_data_egress: str = "disabled"
