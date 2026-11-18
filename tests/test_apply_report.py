@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hari.apply.report import recipients, report_buttons, report_parts, send_report
+from hari.apply.report import recipients, report_hint, report_parts, send_report
 from hari.apply.texts import t
 from hari.db.models import Application
 from tests.conftest import FakeBot
@@ -45,16 +45,16 @@ def test_no_ai_view_and_status_lines():
     assert "Ҳолат: Рад этилган" in parts[0]
 
 
-def test_buttons_follow_status():
-    labels = lambda app: [b.text for row in report_buttons(app).inline_keyboard for b in row]  # noqa: E731
-    assert labels(done_app()) == ["Суҳбатга чақириш", "Рад этиш", "Ишга олиш"]
-    assert labels(done_app(status="interview")) == ["Рад этиш", "Ишга олиш", "Суҳбат баҳосини киритиш"]
-    assert report_buttons(done_app(status="rejected")) is None and report_buttons(done_app(status="hired")) is None
+def test_hint_follows_status():
+    assert report_hint(done_app()).count("«") == 3 and "суҳбатга чақир" in report_hint(done_app())
+    interview = report_hint(done_app(status="interview"))
+    assert "суҳбатга чақир" not in interview and "рад эт" in interview and "суҳбат баҳоси" in interview
+    assert report_hint(done_app(status="rejected")) is None and report_hint(done_app(status="hired")) is None
 
 
 def test_texts_in_three_languages():
-    assert "Розиман" in t("uz_cyrl", "consent_btn") and "Roziman" in t("uz_latn", "consent_btn")
-    assert t("ru", "consent_btn") == "Согласен(на)"
+    assert "«ҳа»" in t("uz_cyrl", "consent") and "«ha»" in t("uz_latn", "consent")
+    assert "«да»" in t("ru", "consent")
     assert "3" in t("ru", "thanks", days=3) and t("ru", "thanks", days=3) != t("uz_cyrl", "thanks", days=3)
     assert "+998901234567" in t("uz_cyrl", "msg_interview", phone="+998901234567")
     assert t("xx", "ask_name") == t("uz_cyrl", "ask_name")

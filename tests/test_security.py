@@ -1,4 +1,4 @@
-"""Data protection: encrypted text at rest, no cross-person access through forged buttons, nothing personal
+"""Data protection: encrypted text at rest, no cross-person access, nothing personal
 in logs, masking before the AI provider, and requests that carry only what the person chose to send."""
 
 from __future__ import annotations
@@ -10,13 +10,12 @@ from sqlalchemy import select, text
 
 from hari import cases as C
 from hari import crypto, egress, memory
-from hari.bot.ui import PickCb
 from hari.config import settings
 from hari.db import session as db
 from hari.db.models import ChatTurn, Employee, HRCase
 from hari.employees import bind_telegram, make_invite
 from hari.worktime import now_utc
-from tests.test_bot_flow import HR, Harness, btn, h  # noqa: F401
+from tests.test_bot_flow import HR, Harness, h  # noqa: F401
 from tests.test_followups import EMP, ScriptedLLM, kb  # noqa: F401
 
 KEY = "test-only-key-not-a-real-secret"
@@ -68,7 +67,7 @@ def test_missing_key_is_reported_to_the_owner():
     assert "DATA_ENCRYPTION_KEY" in settings.missing_config()
 
 
-# --------------------------------------------------------------------------- forged buttons
+# --------------------------------------------------------------------------- rights checked again
 
 async def test_another_hr_cannot_take_or_answer_a_sensitive_case_assigned_elsewhere(session_scope, staff):
     async with session_scope() as s:
@@ -84,18 +83,15 @@ async def test_another_hr_cannot_take_or_answer_a_sensitive_case_assigned_elsewh
         assert case.assignee_id == holder.id and case.decision is None
 
 
-async def test_hr_cannot_create_an_owner_with_a_forged_role_button(h):  # noqa: F811
+async def test_hr_cannot_create_an_owner_by_typing_the_role(h):  # noqa: F811
     await h.say(HR, "Янги ходим")
     await h.say(HR, "Ёлғонов Эга")
     await h.say(HR, "HR")
-    await h.say(HR, "Директор")
-    await h.press(HR, PickCb(field="role", value="owner").pack())  # not among the buttons HR was shown
-    await h.press(HR, btn(h, HR, "— Йўқ"))
-    await h.press(HR, btn(h, HR, "— Йўқ"))
-    await h.say(HR, "бугун")
-    await h.press(HR, btn(h, HR, "Ўзбек (кирилл)"))
-    replies = await h.press(HR, btn(h, HR, "Сақлаш"))
-    assert "ҳуқуқ" in replies[-1].lower() and "t.me" not in replies[-1]
+    replies = await h.say(HR, "Директор")
+    assert "Эгаси" not in replies[0]  # not offered to HR
+    assert "Тушунмадим" in (await h.say(HR, "эгаси"))[0]  # and not taken when typed
+    assert "Тушунмадим" in (await h.say(HR, "owner"))[0]
+    await h.say(HR, "бекор")
     async with db.session_scope() as s:
         assert (await s.execute(select(Employee).where(Employee.role == "owner"))).first() is None
 

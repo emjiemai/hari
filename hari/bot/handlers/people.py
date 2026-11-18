@@ -1,11 +1,11 @@
-"""Owners see every newcomer and run each card from the bot.
+"""Owners see every newcomer and run each card by writing.
 
 - Someone opens HARI through their invite link: every owner gets the full profile card.
 - Someone without a card opens HARI (or a link that no longer works): every owner gets what Telegram
-  tells about them, once per account, with a button that makes them an employee (position, name,
-  department, role). The owner vouches for who it is; the Telegram ID in the report is the proof.
-- /profil E-0003 shows any card. The buttons under it change the position and department (owner or HR)
-  and the role (owner only, through the same one-time confirmation as /rol).
+  tells about them, once per account. Writing «<Telegram ID> ни ходим қилиб қўш» makes them an employee
+  (position, name, department, role). The owner vouches for who it is; the Telegram ID is the proof.
+- «E-0003» or «E-0003 профили» shows any card; «E-0003 лавозими: …» / «… бўлими: …» change it (owner or
+  HR); «E-0003 ролини hr қил» changes the role (owner only, through the one-time confirmation).
 """
 
 from __future__ import annotations
@@ -14,27 +14,28 @@ import hashlib
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
-from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message, User
+from aiogram.types import Message, User
 from loguru import logger
 from sqlalchemy import select
 
-from hari import audit, owners
+from hari import approvals, audit, owners
+from hari import intent as I
 from hari import onboarding as O
 from hari.access import can_manage_employees, is_staff
 from hari.apply.report import vacancy_title
 from hari.apply.texts import STATUS_LABELS as APP_STATUS
-from hari.bot import commands
 from hari.bot import texts as T
-from hari.bot.common import handles_work, staff_by_tg
-from hari.bot.handlers.staff import ROLE_LABELS
-from hari.bot.ui import JoinCb, PersonCb, PickCb, RoleCb, inline, main_menu, notify
+from hari.bot.common import staff_by_tg
+from hari.bot.context import Ctx, ask_confirm, ask_pick
+from hari.bot.handlers.staff import ROLE_LABELS, ROLE_WORDS, _cancelled, _numbered
+from hari.bot.ui import NO_KEYBOARD, notify
 from hari.config import settings
 from hari.db.models import Application, AuditEvent, Employee
 from hari.db.session import session_scope
 from hari.employees import CardError, CardInput, create_card
+from hari.translit import normalize
 from hari.worktime import fmt, now_utc, today_local
 
 router = Router(name="people")
@@ -108,24 +109,24 @@ async def profile_card(session, emp: Employee) -> str:  # noqa: ANN001
     return "\n".join(lines)
 
 
-def card_buttons(viewer: Employee, emp: Employee):  # noqa: ANN201
-    rows = [[("Лавозимни белгилаш", PersonCb(action="pos", emp_id=emp.id))],
-            [("Бўлимни ўзгартириш", PersonCb(action="dept", emp_id=emp.id))]]
+def card_hint(viewer: Employee, emp: Employee) -> str:
+    """What the viewer can write to change the card (there are no buttons)."""
+    lines = [f"Ўзгартириш учун ёзинг: «{emp.code} лавозими: …» ёки «{emp.code} бўлими: …»."]
     if viewer.role == "owner":
-        rows.append([("Ролни ўзгартириш", PersonCb(action="role", emp_id=emp.id))])
-    return inline([[(T.say(viewer, text), cb) for text, cb in row] for row in rows])
+        lines.append(f"Роль: «{emp.code} ролини hr қил» (роллар: {', '.join(ROLE_LABELS)}).")
+    return "\n".join(lines)
 
 
 async def report_join(bot: Bot, emp_id: str) -> None:
-    """Someone opened their invite link: every owner sees the whole card, with the buttons to fix it."""
+    """Someone opened their invite link: every owner sees the whole card and how to change it."""
     async with session_scope() as session:
         emp = await session.get(Employee, emp_id)
         if emp is None:
             return
         card = await profile_card(session, emp)
-        targets = [(o, card_buttons(o, emp)) for o in await owners_to_tell(session, exclude_id=emp.id)]
-    for owner, buttons in targets:
-        await notify(bot, owner, f"Янги ходим HARI'га қўшилди.\n\n{card}", buttons)
+        targets = [(o, card_hint(o, emp)) for o in await owners_to_tell(session, exclude_id=emp.id)]
+    for owner, hint in targets:
+        await notify(bot, owner, f"Янги ходим HARI'га қўшилди.\n\n{card}\n\n{hint}")
 
 
 def _seen_key(telegram_user_id: int) -> str:
@@ -136,6 +137,7 @@ def _seen_key(telegram_user_id: int) -> str:
 async def report_stranger(bot: Bot, user: User, why: str = "") -> None:
     """Someone with no card opened HARI. Owners hear about each account once."""
     key = _seen_key(user.id)
+    lang = "ru" if (user.language_code or "").startswith("ru") else "uz_cyrl"
     async with session_scope() as session:
         if await staff_by_tg(session, user.id) is not None:
             return
@@ -146,7 +148,8 @@ async def report_stranger(bot: Bot, user: User, why: str = "") -> None:
         targets = await owners_to_tell(session)
         if not targets:
             return
-        await audit.record(session, "stranger.report", "sent", object_type="telegram", object_id=key)
+        # Their Telegram app's language is kept, so a card made from this report starts in a language they read.
+        await audit.record(session, "stranger.report", "sent", object_type="telegram", object_id=key, detail=lang)
         app = (await session.execute(select(Application).where(Application.telegram_user_id == user.id)
                                      .order_by(Application.created_at.desc()).limit(1))).scalar_one_or_none()
         applied = "йўқ"
@@ -164,69 +167,116 @@ async def report_stranger(bot: Bot, user: User, why: str = "") -> None:
         f"Вақт: {fmt(now_utc())}",
         f"Ишга ариза: {applied}",
         "",
-        "Ходимингиз бўлса, пастдаги тугма билан қўшинг: лавозими, исми, бўлими ва роли сўралади. "
+        f"Ходимингиз бўлса, «{user.id} ни ходим қилиб қўш» деб ёзинг: лавозими, исми, бўлими ва роли сўралади. "
         "Танимасангиз, ҳеч нарса қилманг — унинг ҳеч қандай ҳуқуқи йўқ.",
     ])
-    lang = "ru" if (user.language_code or "").startswith("ru") else "uz_cyrl"
     for owner in targets:
-        await notify(bot, owner, text, inline([[(T.say(owner, "Ходим қилиб қўшиш"),
-                                                 JoinCb(action="add", tg=user.id, lang=lang))]]))
+        await notify(bot, owner, text)
 
 
-# --------------------------------------------------------------------------- /profil
+async def _stranger_language(session, telegram_user_id: int) -> str:  # noqa: ANN001
+    row = (await session.execute(select(AuditEvent.detail).where(
+        AuditEvent.action == "stranger.report", AuditEvent.object_id == _seen_key(telegram_user_id)).limit(1))).first()
+    return row[0] if row and row[0] in LANGS else "uz_cyrl"
 
-@router.message(Command("profil", "profile"))
-async def show_profile(message: Message, command: CommandObject) -> None:
-    arg = (command.args or "").strip()
+
+# --------------------------------------------------------------------------- finding a person by what was written
+
+async def find_person(ctx: Ctx, args: dict, action: str, question: str) -> Employee | None:
+    """args["who"]: a code (E-0003), a Telegram ID, or a name; else the names in the message. Several
+    people fit → HARI lists them and the typed number decides. Only HR and owners get here."""
     async with session_scope() as session:
-        actor = await _manager(message, session)
+        actor = await _manager(ctx.message, session)
         if actor is None:
-            await message.answer(T.NOT_ALLOWED)
-            return
-        if not arg:
-            await message.answer(T.say(actor, "Мисол: /profil E-0003 (ёки Telegram ID). Рўйхат: /xodimlar"))
-            return
-        where = (Employee.telegram_user_id == int(arg)) if arg.isdigit() else (Employee.code == arg.upper())
-        emp = (await session.execute(select(Employee).where(where))).scalar_one_or_none()
-        if emp is None:
-            await message.answer(T.say(actor, "Ходим топилмади."))
-            return
-        card, buttons = await profile_card(session, emp), card_buttons(actor, emp)
-    await message.answer(T.say(actor, card), reply_markup=buttons)
+            await ctx.say(T.NOT_ALLOWED)
+            return None
+        if args.get("emp_id"):
+            return await session.get(Employee, args["emp_id"])
+        who = args.get("who")
+        who = str(who).strip() if who not in (None, "") else ""
+        code = I.employee_code(who) or (I.employee_code(ctx.text) if not who else None)
+        if code:
+            emp = (await session.execute(select(Employee).where(Employee.code == code))).scalar_one_or_none()
+            if emp is None:
+                await ctx.say("Ходим топилмади.")
+            return emp
+        if who.isdigit():
+            emp = (await session.execute(select(Employee).where(
+                Employee.telegram_user_id == int(who)))).scalar_one_or_none()
+            if emp is None:
+                await ctx.say("Ходим топилмади.")
+            return emp
+        everyone = list((await session.execute(select(Employee).where(Employee.status != "archived")
+                                               .order_by(Employee.code))).scalars())
+    text = normalize((who or ctx.text).lower())
+    fits = [p for p in everyone if any(len(w) >= 4 and normalize(w.lower()) in text for w in p.full_name.split())]
+    if len(fits) == 1:
+        return fits[0]
+    if not fits:
+        await ctx.say("Ходим топилмади. Кодини ёзинг, масалан: E-0003 (рўйхат: «ходимлар»).")
+        return None
+    await ask_pick(ctx, question, action, {k: v for k, v in args.items() if k != "who"}, "emp_id",
+                   [(p.id, f"{p.code} {p.full_name} — {p.position}") for p in fits[:10]])
+    return None
 
 
-# --------------------------------------------------------------------------- position and department
+# --------------------------------------------------------------------------- the card
 
-@router.callback_query(PersonCb.filter(F.action.in_(set(FIELDS))))
-async def edit_field(query: CallbackQuery, callback_data: PersonCb, state: FSMContext) -> None:
+async def employee_profile(ctx: Ctx, args: dict) -> None:
+    emp = await find_person(ctx, args, "employee_profile", "Кимнинг профили?")
+    if emp is None:
+        return
     async with session_scope() as session:
-        actor = await _manager(query, session)
-        emp = await session.get(Employee, callback_data.emp_id)
-        if actor is None or emp is None:
-            await query.answer(T.NOT_ALLOWED, show_alert=True)
-            return
-        attr, label = FIELDS[callback_data.action]
-        current = getattr(emp, attr)
-    await state.clear()
-    await state.set_state(EditPerson.value)
-    await state.update_data(emp_id=emp.id, field=callback_data.action)
-    await query.answer()
-    await query.message.answer(T.say(actor, f"{emp.full_name}: ҳозирги {label} — «{current}».\n"
-                                            f"Янги {label}ни ёзинг (/bekor — бекор қилиш):"))
+        card = await profile_card(session, await session.get(Employee, emp.id))
+    await ctx.say(f"{card}\n\n{card_hint(ctx.emp, emp)}")
+
+
+async def employee_edit(ctx: Ctx, args: dict) -> None:
+    emp = await find_person(ctx, args, "employee_edit", "Кимнинг карточкаси?")
+    if emp is None:
+        return
+    field = {"position": "pos", "department": "dept"}.get(args.get("field") or "", args.get("field"))
+    if field not in FIELDS:
+        await ctx.say(f"Нимани ўзгартирай: лавозимими ёки бўлимими? Масалан: «{emp.code} лавозими: Сотувчи».")
+        return
+    attr, label = FIELDS[field]
+    value = " ".join(str(args.get("value") or "").split())
+    if not value:
+        await ctx.state.set_state(EditPerson.value)
+        await ctx.state.update_data(emp_id=emp.id, field=field)
+        await ctx.say(f"{emp.full_name}: ҳозирги {label} — «{getattr(emp, attr)}».\n"
+                      f"Янги {label}ни ёзинг («бекор» — тўхтатиш):")
+        return
+    if len(value) > 100:
+        await ctx.say("1–100 белги бўлсин.")
+        return
+    if not ctx.confirmed:
+        await ask_confirm(ctx, f"{emp.code} {emp.full_name}: {label} «{getattr(emp, attr)}» → «{value}».",
+                          "employee_edit", {"emp_id": emp.id, "field": field, "value": value})
+        return
+    await _save_field(ctx.message, ctx.bot, emp.id, field, value)
 
 
 @router.message(EditPerson.value, F.text)
-async def save_field(message: Message, state: FSMContext, bot: Bot) -> None:
+async def edit_value_typed(message: Message, state: FSMContext, bot: Bot) -> None:
     data = await state.get_data()
     value = " ".join(message.text.split())
+    if _cancelled(message):
+        await state.clear()
+        await message.answer(T.CANCELLED)
+        return
     if not value or len(value) > 100 or value.startswith("/"):
-        await message.answer("1–100 белги бўлсин. Қайта ёзинг ёки /bekor:")
+        await message.answer("1–100 белги бўлсин. Қайта ёзинг ёки «бекор»:")
         return
     await state.clear()
-    attr, label = FIELDS.get(data.get("field"), (None, None))
+    await _save_field(message, bot, data.get("emp_id", ""), data.get("field"), value)
+
+
+async def _save_field(message: Message, bot: Bot, emp_id: str, field: str | None, value: str) -> None:
+    attr, label = FIELDS.get(field or "", (None, None))
     async with session_scope() as session:
         actor = await _manager(message, session)
-        emp = await session.get(Employee, data.get("emp_id", ""))
+        emp = await session.get(Employee, emp_id)
         if actor is None or emp is None or attr is None:
             await message.answer(T.NOT_ALLOWED)
             return
@@ -235,79 +285,93 @@ async def save_field(message: Message, state: FSMContext, bot: Bot) -> None:
         await audit.record(session, "employee.edit", "changed", actor_id=actor.id, object_type="employee",
                            object_id=emp.id, detail=attr)
         await session.flush()
-        card, buttons = await profile_card(session, emp), card_buttons(actor, emp)
+        card = await profile_card(session, emp)
         person = emp if emp.id != actor.id else None
-    await message.answer(T.say(actor, f"Сақланди: {label} «{old}» → «{value}».\n\n{card}"), reply_markup=buttons)
+    await message.answer(T.say(actor, f"Сақланди: {label} «{old}» → «{value}».\n\n{card}"))
     await notify(bot, person, f"Профилингиз янгиланди: {label} — {value}.")
 
 
-# --------------------------------------------------------------------------- role, from the card
+# --------------------------------------------------------------------------- role (owner, one-time approval)
 
-async def role_draft(session, actor: Employee, target: Employee, role: str):  # noqa: ANN001, ANN201
-    """The /rol draft: nothing changes until the owner presses the one-time confirmation."""
-    approval = await owners.request_role_change(session, actor, target.id, role)
-    text = (f"Роль ўзгариши лойиҳаси: {target.code} {target.full_name}\n"
-            f"{ROLE_LABELS.get(target.role, target.role)} → {ROLE_LABELS.get(role, role)}\n\n"
-            f"Тасдиқ фақат шу ўзгариш учун, бир марта ва {settings.approval_ttl_minutes} дақиқа амал қилади.")
-    buttons = inline([[("Тасдиқлаш", RoleCb(action="ok", emp_id=approval.id, role=role)),
-                       ("Бекор", RoleCb(action="no", emp_id=approval.id))]])
-    return text, buttons
+APPROVAL_REASONS = {"expired": "тасдиқ муддати ўтди", "payload_changed": "ўзгариш мазмуни бошқа",
+                    "version_changed": "ходим ёзуви бу орада ўзгарган", "already_used": "тасдиқ аллақачон ишлатилган",
+                    "other_actor": "бу тасдиқ сизники эмас"}
 
 
-@router.callback_query(PersonCb.filter(F.action == "role"))
-async def pick_role(query: CallbackQuery, callback_data: PersonCb) -> None:
+async def role_change(ctx: Ctx, args: dict) -> None:
+    """An owner drafts a role change; it happens only when they answer «ҳа» within the approval's time
+    (spec 2.0 §25, T19–T20). The «ҳа» uses the approval made for exactly this change."""
+    if ctx.emp.role != "owner":
+        await ctx.say(T.NOT_ALLOWED)
+        return
+    if args.get("approval_id"):
+        if ctx.confirmed:
+            await _role_confirm(ctx, args)
+        return
+    target = await find_person(ctx, args, "role_change", "Кимнинг роли?")
+    if target is None:
+        return
+    role = args.get("role")
+    if role not in ROLE_LABELS and role:
+        role = I.choice(str(role), [(r, (ROLE_LABELS[r], *ROLE_WORDS[r])) for r in ROLE_LABELS])
+    if role not in ROLE_LABELS:
+        await ctx.say(f"{target.full_name} учун қайси роль? Масалан: «{target.code} ролини hr қил».\nРоллар: "
+                      + ", ".join(f"{k} ({v})" for k, v in ROLE_LABELS.items()))
+        return
     async with session_scope() as session:
-        actor = await staff_by_tg(session, query.from_user.id)
-        emp = await session.get(Employee, callback_data.emp_id)
-        if actor is None or actor.role != "owner" or emp is None:
-            await query.answer(T.NOT_ALLOWED, show_alert=True)
-            return
-    roles = [r for r in ROLE_LABELS if r != emp.role]
-    rows = [[(ROLE_LABELS[r], RoleCb(action="set", emp_id=emp.id, role=r)) for r in roles[i:i + 3]]
-            for i in range(0, len(roles), 3)]
-    await query.answer()
-    await query.message.answer(T.say(actor, f"{emp.full_name} учун янги роль:"), reply_markup=inline(rows))
-
-
-@router.callback_query(RoleCb.filter(F.action == "set"))
-async def role_from_card(query: CallbackQuery, callback_data: RoleCb) -> None:
-    async with session_scope() as session:
-        actor = await staff_by_tg(session, query.from_user.id)
-        target = await session.get(Employee, callback_data.emp_id)
-        if actor is None or actor.role != "owner" or target is None:
-            await query.answer(T.NOT_ALLOWED, show_alert=True)
-            return
+        actor = await session.get(Employee, ctx.emp.id)
+        target = await session.get(Employee, target.id)
         try:
-            text, buttons = await role_draft(session, actor, target, callback_data.role)
+            approval = await owners.request_role_change(session, actor, target.id, role)
         except owners.RoleError as exc:
-            await query.answer(T.say(actor, str(exc)), show_alert=True)
+            await ctx.say(str(exc))
             return
-    await query.answer()
-    await query.message.edit_reply_markup(reply_markup=None)
-    await query.message.answer(T.say(actor, text), reply_markup=buttons)
+        summary = (f"Роль ўзгариши лойиҳаси: {target.code} {target.full_name}\n"
+                   f"{ROLE_LABELS.get(target.role, target.role)} → {ROLE_LABELS.get(role, role)}\n\n"
+                   f"Тасдиқ фақат шу ўзгариш учун, бир марта ва {settings.approval_ttl_minutes} дақиқа амал қилади.")
+        pending = {"approval_id": approval.id, "target_id": target.id, "role": role}
+    await ask_confirm(ctx, summary, "role_change", pending)
+
+
+async def _role_confirm(ctx: Ctx, args: dict) -> None:
+    try:
+        async with session_scope() as session:
+            actor = await session.get(Employee, ctx.emp.id)
+            try:
+                target = await owners.confirm_role_change(session, actor, args["approval_id"], args["target_id"],
+                                                          args["role"])
+            except approvals.ApprovalError as exc:
+                await ctx.say(f"Бажарилмади: {APPROVAL_REASONS.get(exc.reason, exc.reason)}. Қайта сўранг.")
+                return
+            done = f"{target.code} {target.full_name}: роль — {ROLE_LABELS.get(target.role, target.role)}."
+    except owners.RoleError as exc:
+        await ctx.say(str(exc))
+        return
+    await ctx.say(done)
 
 
 # --------------------------------------------------------------------------- someone without a card
 
-@router.callback_query(JoinCb.filter(F.action == "add"))
-async def add_start(query: CallbackQuery, callback_data: JoinCb, state: FSMContext) -> None:
-    async with session_scope() as session:
-        actor = await _manager(query, session)
-        if actor is None:
-            await query.answer(T.NOT_ALLOWED, show_alert=True)
-            return
-        bound = (await session.execute(select(Employee).where(
-            Employee.telegram_user_id == callback_data.tg))).scalar_one_or_none()
-    if bound is not None:
-        await query.answer(T.say(actor, f"Бу Telegram аккаунт аллақачон {bound.code} {bound.full_name} "
-                                        "карточкасига боғланган."), show_alert=True)
+async def add_person(ctx: Ctx, args: dict) -> None:
+    tg = args.get("tg")
+    tg = int(tg) if isinstance(tg, int) or (isinstance(tg, str) and tg.isdigit()) else I.telegram_id(ctx.text)
+    if not tg:
+        await ctx.say("Telegram ID'сини ёзинг, масалан: «123456789 ни ходим қилиб қўш».")
         return
-    await state.clear()
-    await state.set_state(AddPerson.position)
-    await state.update_data(tg=callback_data.tg, lang=callback_data.lang if callback_data.lang in LANGS else "uz_cyrl")
-    await query.answer()
-    await query.message.answer(T.say(actor, f"Telegram ID {callback_data.tg} — янги ходим. "
-                                            "Ҳар қадамда /bekor — бекор қилиш.\n\n1/4. Лавозими:"))
+    async with session_scope() as session:
+        actor = await _manager(ctx.message, session)
+        if actor is None:
+            await ctx.say(T.NOT_ALLOWED)
+            return
+        bound = (await session.execute(select(Employee).where(Employee.telegram_user_id == tg))).scalar_one_or_none()
+        lang = await _stranger_language(session, tg)
+    if bound is not None:
+        await ctx.say(f"Бу Telegram аккаунт аллақачон {bound.code} {bound.full_name} карточкасига боғланган.")
+        return
+    await ctx.state.clear()
+    await ctx.state.set_state(AddPerson.position)
+    await ctx.state.update_data(tg=tg, lang=lang)
+    await ctx.say(f"Telegram ID {tg} — янги ходим. Ҳар қадамда «бекор» деб ёзсангиз, тўхтатаман.\n\n1/4. Лавозими:")
 
 
 def _clean(message: Message, limit: int) -> str | None:
@@ -315,11 +379,19 @@ def _clean(message: Message, limit: int) -> str | None:
     return value if value and len(value) <= limit and not value.startswith("/") else None
 
 
+def _roles_for(actor: Employee | None) -> list[str]:
+    return [r for r in ROLE_LABELS if r != "owner" or (actor is not None and actor.role == "owner")]
+
+
 @router.message(AddPerson.position, F.text)
 async def add_position(message: Message, state: FSMContext) -> None:
+    if _cancelled(message):
+        await state.clear()
+        await message.answer(T.CANCELLED)
+        return
     value = _clean(message, 100)
     if value is None:
-        await message.answer("Лавозимни 1–100 белгида ёзинг ёки /bekor:")
+        await message.answer("Лавозимни 1–100 белгида ёзинг ёки «бекор»:")
         return
     await state.update_data(position=value)
     await state.set_state(AddPerson.full_name)
@@ -328,90 +400,91 @@ async def add_position(message: Message, state: FSMContext) -> None:
 
 @router.message(AddPerson.full_name, F.text)
 async def add_name(message: Message, state: FSMContext) -> None:
+    if _cancelled(message):
+        await state.clear()
+        await message.answer(T.CANCELLED)
+        return
     value = _clean(message, 200)
     if value is None or len(value.split()) < 2:
-        await message.answer("Камида фамилия ва исм керак. Қайта ёзинг ёки /bekor:")
+        await message.answer("Камида фамилия ва исм керак. Қайта ёзинг ёки «бекор»:")
         return
     await state.update_data(full_name=value)
     await state.set_state(AddPerson.department)
     async with session_scope() as session:
         depts = sorted({d for (d,) in (await session.execute(select(Employee.department))).all() if d})[:9]
     await state.update_data(depts=depts)
-    rows = [[(d, PickCb(field="adddept", value=str(i))) for i, d in list(enumerate(depts))[j:j + 3]]
-            for j in range(0, len(depts), 3)]
-    await message.answer("3/4. Бўлими — тугмани босинг ёки янгисини ёзинг:",
-                         reply_markup=inline(rows) if rows else None)
-
-
-async def _ask_role(message: Message, state: FSMContext, actor_tg: int, department: str) -> None:
-    await state.update_data(department=department)
-    await state.set_state(AddPerson.role)
-    async with session_scope() as session:
-        actor = await staff_by_tg(session, actor_tg)
-    roles = [r for r in ROLE_LABELS if r != "owner" or (actor and actor.role == "owner")]
-    rows = [[(ROLE_LABELS[r], PickCb(field="addrole", value=r)) for r in roles[i:i + 3]]
-            for i in range(0, len(roles), 3)]
-    await message.answer(f"Бўлим: {department}\n4/4. Роли (HARI'да нима қила олади):", reply_markup=inline(rows))
+    listing = ("\n" + _numbered(depts)) if depts else ""
+    await message.answer("3/4. Бўлими — рўйхатдаги рақамни ёки бўлим номини ёзинг:" + listing)
 
 
 @router.message(AddPerson.department, F.text)
-async def add_department_typed(message: Message, state: FSMContext) -> None:
+async def add_department(message: Message, state: FSMContext) -> None:
+    if _cancelled(message):
+        await state.clear()
+        await message.answer(T.CANCELLED)
+        return
     value = _clean(message, 100)
     if value is None:
-        await message.answer("Бўлимни 1–100 белгида ёзинг ёки /bekor:")
+        await message.answer("Бўлимни 1–100 белгида ёзинг ёки «бекор»:")
         return
-    await _ask_role(message, state, message.from_user.id, value)
-
-
-@router.callback_query(AddPerson.department, PickCb.filter(F.field == "adddept"))
-async def add_department_picked(query: CallbackQuery, callback_data: PickCb, state: FSMContext) -> None:
     depts = (await state.get_data()).get("depts", [])
-    index = int(callback_data.value) if callback_data.value.isdigit() else -1
-    if not 0 <= index < len(depts):
-        await query.answer(T.NOT_ALLOWED, show_alert=True)
-        return
-    await query.answer()
-    await query.message.edit_reply_markup(reply_markup=None)
-    await _ask_role(query.message, state, query.from_user.id, depts[index])
+    if value.isdigit():
+        index = int(value) - 1
+        if not 0 <= index < len(depts):
+            await message.answer("Бундай рақам рўйхатда йўқ. Рақамни ёки бўлим номини ёзинг:")
+            return
+        value = depts[index]
+    await state.update_data(department=value)
+    await state.set_state(AddPerson.role)
+    async with session_scope() as session:
+        actor = await staff_by_tg(session, message.from_user.id)
+    await message.answer(f"Бўлим: {value}\n4/4. Роли (HARI'да нима қила олади) — рақамини ёки номини ёзинг:\n"
+                         + _numbered([ROLE_LABELS[r] for r in _roles_for(actor)]))
 
 
-@router.callback_query(AddPerson.role, PickCb.filter(F.field == "addrole"))
-async def add_role(query: CallbackQuery, callback_data: PickCb, state: FSMContext) -> None:
-    if callback_data.value not in ROLE_LABELS:
-        await query.answer(T.NOT_ALLOWED, show_alert=True)
+@router.message(AddPerson.role, F.text)
+async def add_role(message: Message, state: FSMContext) -> None:
+    if _cancelled(message):
+        await state.clear()
+        await message.answer(T.CANCELLED)
         return
-    await state.update_data(role=callback_data.value)
+    async with session_scope() as session:
+        actor = await staff_by_tg(session, message.from_user.id)
+    roles = _roles_for(actor)
+    role = I.choice(message.text, [(r, (ROLE_LABELS[r], *ROLE_WORDS[r])) for r in roles])
+    if role is None:
+        await message.answer("Тушунмадим. Ролни рақами билан ёзинг:\n" + _numbered([ROLE_LABELS[r] for r in roles]))
+        return
+    await state.update_data(role=role)
     await state.set_state(AddPerson.confirm)
     data = await state.get_data()
-    await query.answer()
-    await query.message.edit_reply_markup(reply_markup=None)
-    await query.message.answer(
+    await message.answer(
         f"Текширинг:\nТелеграм ID: {data['tg']}\nФИШ: {data['full_name']}\nЛавозим: {data['position']}\n"
-        f"Бўлим: {data['department']}\nРоль: {ROLE_LABELS[data['role']]}\nБошлаш санаси: бугун\n\n"
-        "Сақласам, у дарҳол ходим бўлади ва менюси очилади.",
-        reply_markup=inline([[("Сақлаш", PickCb(field="addok", value="yes")),
-                              ("Бекор", PickCb(field="addok", value="no"))]]))
+        f"Бўлим: {data['department']}\nРоль: {ROLE_LABELS[role]}\nБошлаш санаси: бугун\n\n"
+        "Сақласам, у дарҳол ходим бўлади. Сақлайми? «ҳа» ёки «йўқ» деб ёзинг.")
 
 
-@router.callback_query(AddPerson.confirm, PickCb.filter(F.field == "addok"))
-async def add_confirm(query: CallbackQuery, callback_data: PickCb, state: FSMContext, bot: Bot) -> None:
+@router.message(AddPerson.confirm, F.text)
+async def add_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
+    if not I.is_yes(message.text):
+        if I.is_no(message.text):
+            await state.clear()
+            await message.answer(T.CANCELLED)
+        else:
+            await message.answer("Сақлаш учун «ҳа», бекор қилиш учун «йўқ» деб ёзинг.")
+        return
     data = await state.get_data()
     await state.clear()
-    await query.message.edit_reply_markup(reply_markup=None)
-    await query.answer()
-    if callback_data.value != "yes":
-        await query.message.answer(T.CANCELLED)
-        return
     tg, role = int(data["tg"]), data.get("role")
     async with session_scope() as session:
-        actor = await _manager(query, session)
-        # Buttons can be forged: the role is checked again here, and only an owner makes an owner.
+        actor = await _manager(message, session)
+        # Checked again at saving: only HR or an owner, and only an owner makes an owner.
         if actor is None or role not in ROLE_LABELS or (role == "owner" and actor.role != "owner"):
-            await query.message.answer(T.NOT_ALLOWED)
+            await message.answer(T.NOT_ALLOWED)
             return
         bound = (await session.execute(select(Employee).where(Employee.telegram_user_id == tg))).scalar_one_or_none()
         if bound is not None:
-            await query.message.answer(f"Сақланмади: бу Telegram аккаунт аллақачон {bound.code} карточкасида.")
+            await message.answer(f"Сақланмади: бу Telegram аккаунт аллақачон {bound.code} карточкасида.")
             return
         today = today_local()
         try:
@@ -420,24 +493,28 @@ async def add_confirm(query: CallbackQuery, callback_data: PickCb, state: FSMCon
                 role=role, start_date=today, language=data.get("lang", "uz_cyrl"),
             ), created_by=actor.id)
         except CardError as exc:
-            await query.message.answer(f"Сақланмади: {exc}")
+            await message.answer(f"Сақланмади: {exc}")
             return
         if not created:
-            await query.message.answer(f"Сақланмади: {emp.code} {emp.full_name} карточкаси аллақачон бор. "
-                                       f"Унга /taklif {emp.code} билан ҳавола беринг.")
+            await message.answer(f"Сақланмади: {emp.code} {emp.full_name} карточкаси аллақачон бор. "
+                                 f"Унга ҳавола беринг: «{emp.code} га ҳавола».")
             return
         emp.telegram_user_id, emp.identity_verified_at, emp.status = tg, now_utc(), "active"
         await audit.record(session, "invite.use", "bound_by_owner", actor_id=actor.id, object_type="employee",
                            object_id=emp.id)
         await O.create_plan(session, emp, today, actor_id=actor.id)
         await session.flush()
-        card, buttons = await profile_card(session, emp), card_buttons(actor, emp)
-        welcome, menu = T.say(emp, T.welcome(emp, None, None)), main_menu(emp, await handles_work(session, emp))
-    await query.message.answer(T.say(actor, f"Ходим қўшилди.\n\n{card}"), reply_markup=buttons)
+        card = await profile_card(session, emp)
+        welcome = T.say(emp, T.welcome(emp, None, None))
+    await message.answer(T.say(actor, f"Ходим қўшилди.\n\n{card}\n\n{card_hint(actor, emp)}"))
     try:
-        await bot.send_message(tg, welcome, reply_markup=menu)
+        await bot.send_message(tg, welcome, reply_markup=NO_KEYBOARD)
     except TelegramAPIError as exc:
         logger.warning("Welcome to a new card not delivered: {}", type(exc).__name__)
-        await query.message.answer("Ходимга хабар етмади: у HARI'ни қайта очиб /start босиши керак.")
-        return
-    await commands.sync_for(bot, emp)
+        await message.answer("Ходимга хабар етмади: у HARI'ни қайта очиб /start босиши керак.")
+
+
+ACTIONS = {
+    "employee_profile": employee_profile, "employee_edit": employee_edit, "role_change": role_change,
+    "add_person": add_person,
+}

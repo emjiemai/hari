@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import InlineKeyboardMarkup
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,11 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hari.apply import evaluate as E
 from hari.apply import rubric
 from hari.apply.evaluate import VERDICTS
-from hari.apply.texts import (
-    BTN_HIRE, BTN_INTERVIEW, BTN_INTERVIEW_SCORE, BTN_REJECT, LANG_NAMES, NO_AI, STATUS_LABELS,
-)
+from hari.apply.texts import LANG_NAMES, NO_AI, STATUS_LABELS
 from hari.apply.vacancies import title_for
-from hari.bot.ui import AppActCb, inline, notify, send_proof
+from hari.bot.ui import notify, send_proof
 from hari.db.models import Application, Employee, Vacancy
 from hari.db.session import session_scope
 from hari.worktime import now_utc
@@ -88,17 +85,17 @@ def report_parts(app: Application, vacancy_title: str) -> list[str]:
     return parts
 
 
-def report_buttons(app: Application) -> InlineKeyboardMarkup | None:
-    row = []
+def report_hint(app: Application) -> str | None:
+    """What the reader can write about this application (there are no buttons)."""
+    n = app.number
+    lines = []
     if app.status == "submitted":
-        row.append((BTN_INTERVIEW, AppActCb(action="interview", app_id=app.id)))
+        lines.append(f"«{n} ни суҳбатга чақир»")
     if app.status in ("submitted", "interview"):
-        row += [(BTN_REJECT, AppActCb(action="reject", app_id=app.id)),
-                (BTN_HIRE, AppActCb(action="hire", app_id=app.id))]
-    rows = [row] if row else []
+        lines += [f"«{n} рад эт: асос»", f"«{n} ни ишга ол»"]
     if app.status == "interview":  # the person who held the interview scores it; HARI never does
-        rows.append([(BTN_INTERVIEW_SCORE, AppActCb(action="score", app_id=app.id))])
-    return inline(rows) if rows else None
+        lines.append(f"«{n} суҳбат баҳоси 0–4»")
+    return ("Қарор учун ёзинг: " + ", ".join(lines) + ".") if lines else None
 
 
 async def vacancy_title(session: AsyncSession, app: Application) -> str:
@@ -112,11 +109,12 @@ async def recipients(session: AsyncSession) -> list[Employee]:
     ).order_by(Employee.code))).scalars())
 
 
-async def send_to(bot: Bot, person: Employee, parts: list[str], buttons: InlineKeyboardMarkup | None,
+async def send_to(bot: Bot, person: Employee, parts: list[str], hint: str | None,
                   resume_file_id: str | None) -> bool:
     ok = True
     for i, part in enumerate(parts):
-        ok = await notify(bot, person, part, buttons if i == len(parts) - 1 else None) and ok
+        last = i == len(parts) - 1
+        ok = await notify(bot, person, f"{part}\n\n{hint}" if last and hint else part) and ok
     if ok:
         await send_proof(bot, person, resume_file_id)
     return ok
@@ -126,7 +124,7 @@ async def send_report(bot: Bot, session: AsyncSession, app: Application) -> int:
     parts = report_parts(app, await vacancy_title(session, app))
     reached = 0
     for person in await recipients(session):
-        reached += await send_to(bot, person, parts, report_buttons(app), app.resume_file_id)
+        reached += await send_to(bot, person, parts, report_hint(app), app.resume_file_id)
     if reached:
         app.reported_at = now_utc()
     else:

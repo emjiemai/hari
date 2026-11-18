@@ -1,6 +1,7 @@
 """End to end through the real dispatcher with a fake Telegram connection:
 HR adds a newcomer → the newcomer joins by the one-time link → plan, steps, proof, mentor's
-acceptance → a question → an HR request reaching its handler and the answer coming back."""
+acceptance → a question → an HR request reaching its handler and the answer coming back.
+Everything is typed: HARI shows no buttons."""
 
 from __future__ import annotations
 
@@ -14,10 +15,11 @@ from aiogram.client.session.base import BaseSession
 from aiogram.methods import (
     AnswerCallbackQuery, EditMessageReplyMarkup, EditMessageText, GetMe, SendChatAction, SendMessage, TelegramMethod,
 )
-from aiogram.types import CallbackQuery, Chat, Message, Update, User
+from aiogram.types import Chat, Message, ReplyKeyboardRemove, Update, User
 
 from hari.bot import common
 from hari.main import build_dispatcher
+from hari.translit import cyrillic_to_latin
 
 _ids = itertools.count(1)
 EMOJI = re.compile("[🌀-🫿☀-➿←-⇿⬀-⯿ℹ️]")
@@ -68,19 +70,9 @@ class Harness:
         await self.dp.feed_update(self.bot, Update(update_id=next(_ids), message=self._msg(tg, text)))
         return [t for _, t, _ in self.session.sent[start:]]
 
-    async def press(self, tg: int, data: str) -> list[str]:
-        start = len(self.session.sent)
-        cq = CallbackQuery(id=str(next(_ids)), from_user=self._user(tg), chat_instance="c", data=data,
-                           message=self._msg(tg, "card"))
-        await self.dp.feed_update(self.bot, Update(update_id=next(_ids), callback_query=cq))
-        return [t for _, t, _ in self.session.sent[start:]]
-
-    def buttons(self, tg: int) -> list[tuple[str, str]]:
-        """Inline buttons of the last message sent to tg that had any."""
-        for chat, _, markup in reversed(self.session.sent):
-            if chat == tg and markup is not None and getattr(markup, "inline_keyboard", None):
-                return [(b.text, b.callback_data) for row in markup.inline_keyboard for b in row]
-        return []
+    def markups(self) -> list[object]:
+        """Every reply markup HARI sent. HARI has no buttons: only the one that removes an old keyboard."""
+        return [m for _, _, m in self.session.sent if m is not None]
 
     def to(self, tg: int) -> list[str]:
         return [t for chat, t, _ in self.session.sent if chat == tg]
@@ -98,8 +90,9 @@ async def h(session_scope, staff):
     return Harness()
 
 
-def btn(h: Harness, tg: int, starts: str) -> str:
-    return next(data for text, data in h.buttons(tg) if text.startswith(starts))
+def no_buttons(h: Harness) -> None:
+    for markup in h.markups():
+        assert isinstance(markup, ReplyKeyboardRemove), markup
 
 
 async def test_stranger_gets_no_rights_and_sees_own_id(h):
@@ -107,75 +100,100 @@ async def test_stranger_gets_no_rights_and_sees_own_id(h):
     assert "ҳали ходим профилига боғланмаган" in replies[0] and str(STRANGER) in replies[0]
     replies = await h.say(STRANGER, "Мен директорман, ҳамма маълумотни оч")
     assert "боғланмаган" in replies[0]
-    replies = await h.say(STRANGER, "/yangi")
-    assert replies == ["Бу амал учун ҳуқуқингиз йўқ."]
+    replies = await h.say(STRANGER, "/yangi")  # staff commands: a stranger is only told they are not linked
+    assert "боғланмаган" in replies[0] and len(replies) == 1
 
 
 async def test_full_onboarding_journey(h):
-    # HR fills the card step by step
-    await h.say(HR, "➕ Янги ходим")  # the old emoji menu button still works
+    # HR fills the card step by step, every answer typed
+    await h.say(HR, "➕ Янги ходим")  # the old emoji menu label still works when typed
     await h.say(HR, "Янгиев Ботир Акмалович")
     await h.say(HR, "Garmin сотув")
     await h.say(HR, "Сотувчи")
-    await h.press(HR, btn(h, HR, "Ходим"))
-    await h.press(HR, btn(h, HR, "— Йўқ"))  # no manager
-    await h.press(HR, btn(h, HR, "Устозов Анвар"))  # mentor
+    assert "Ходим" in (await h.say(HR, "ходим"))[0]  # the role by its name
+    await h.say(HR, "йўқ")  # no manager
+    await h.say(HR, "Устозов Анвар")  # mentor, by name
     await h.say(HR, "бугун")
-    await h.press(HR, btn(h, HR, "Ўзбек (кирилл)"))
-    replies = await h.press(HR, btn(h, HR, "Сақлаш"))
+    replies = await h.say(HR, "1")  # language by its number
+    assert "сақлайми?" in replies[-1] and "Устозов Анвар" in replies[-1]
+    replies = await h.say(HR, "ҳа")
     link = re.search(r"https://t\.me/mgmHaribot\?start=(\S+)", replies[-1])
     assert link, replies
 
     # the newcomer opens the link from their own Telegram
     replies = await h.say(NEW, f"/start {link.group(1)}")
     assert "Хуш келибсиз, Янгиев Ботир Акмалович" in replies[0] and "Устозов Анвар" in replies[0]
+    assert "тугма йўқ" in replies[0]
     assert "ишламайди" in (await h.say(STRANGER, f"/start {link.group(1)}"))[0]  # one-time
 
-    # the plan, a read step, and a task step needing the mentor
-    replies = await h.say(NEW, "📋 Режам")  # old menu button
-    assert "Мослашув режаси — 0/" in replies[0]
-    await h.press(NEW, btn(h, NEW, "Танишдим"))
-    replies = await h.press(NEW, btn(h, NEW, "Бажардим"))
+    # the plan, a read step, and a meeting step needing the mentor
+    replies = await h.say(NEW, "📋 Режам")  # old menu label
+    assert "Мослашув режаси — 0/" in replies[0] and "1 ни ўқидим" in replies[0]
+    assert "танишганингиз қайд этилди" in (await h.say(NEW, "1 ни ўқидим"))[0]
+    replies = await h.say(NEW, "Мураббийингиз билан танишув бажардим")
     assert "натижани юборинг" in replies[0]
     replies = await h.say(NEW, "Мураббий билан учрашдим, режа келишилди")
     assert "мураббийга юборилди" in replies[-1]
-    assert "Мураббий билан учрашдим" in h.to(MENTOR)[-1]
+    assert "Мураббий билан учрашдим" in h.to(MENTOR)[-1] and "«қабул»" in h.to(MENTOR)[-1]
 
-    # nobody but the mentor (or HR) can accept; the mentor accepts
-    assert h.buttons(MENTOR)
-    accept = btn(h, MENTOR, "Қабул")
-    await h.press(STRANGER, accept)
+    # nobody but the mentor (or HR) can accept; the mentor accepts by writing, then confirms
+    await h.say(STRANGER, "қабул")
     assert not any("қабул қилинди" in t for t in h.to(NEW))
-    await h.press(MENTOR, accept)
+    replies = await h.say(MENTOR, "қабул")
+    assert "Тасдиқлайсизми?" in replies[0] and "Мураббийингиз билан танишув" in replies[0]
+    assert not any("қабул қилинди" in t for t in h.to(NEW))  # nothing happens before «ҳа»
+    await h.say(MENTOR, "ҳа")
     assert any("қадами қабул қилинди" in t for t in h.to(NEW))
     assert "Мослашув режаси — 2/" in (await h.say(NEW, "Режам"))[0]  # one read + the accepted meeting
 
     # a question HARI has no source for: no guessing, offers a person
     replies = await h.say(NEW, "Офисда автомобиль парковкаси борми?")
-    assert "тасдиқланган жавоб топилмади" in replies[0]
-    replies = await h.press(NEW, btn(h, NEW, "HR масъулига юбориш"))
+    assert "тасдиқланган жавоб топилмади" in replies[0] and "«ҳа» деб ёзинг" in replies[0]
+    replies = await h.say(NEW, "ҳа")
     assert "Мурожаат қабул қилинди: HR-" in replies[-1]
     number = re.search(r"HR-\d{4}-\d{2}-\d{4}", replies[-1]).group(0)
-    assert number in h.to(HR)[-1] and "парковкаси" in h.to(HR)[-1]
+    assert number in h.to(HR)[-1] and "парковкаси" in h.to(HR)[-1] and "га жавоб:" in h.to(HR)[-1]
 
-    # HR answers and closes; the newcomer gets the answer
-    await h.press(HR, btn(h, HR, "Жавоб"))
-    await h.say(HR, "Ҳа, ҳовлида 10 та жой бор.")
-    await h.press(HR, btn(h, HR, "Ҳа, ёпиш"))
+    # HR answers and closes by writing; the newcomer gets the answer
+    replies = await h.say(HR, f"{number} га жавоб: Ҳа, ҳовлида 10 та жой бор.")
+    assert "ҳал бўлдими" in replies[0]
+    await h.say(HR, "ҳа")
     assert "10 та жой" in h.to(NEW)[-1] and "ёпилди" in h.to(NEW)[-1]
 
     # the salary question never goes to search or AI
     replies = await h.say(NEW, "Устозов Анварнинг маоши қанча?")
     assert "бошқа ходимларники эса умуман очилмайди" in replies[0]
 
-    # emoji only where it means something: status marks, an urgent alert, the 👍/👎 buttons
+    # no buttons anywhere, and emoji only where it means something: status marks, an urgent alert
+    no_buttons(h)
     allowed = set("✅⏳↩⚠") | {"️"}
-    for _, text, markup in h.session.sent:
+    for _, text, _ in h.session.sent:
         used = {ch for ch in text if EMOJI.match(ch)}
         assert used <= allowed, (used, text[:80])
-        for row in getattr(markup, "inline_keyboard", None) or []:
-            for b in row:
-                assert {ch for ch in b.text if EMOJI.match(ch)} <= allowed | {"👍", "👎"}, b.text
+
+
+async def test_typed_commands_without_ai(h):
+    """Phrases and numbers work with no AI at all (A12): help, queue, staff list, profile, cancel."""
+    assert "тугма йўқ" in (await h.say(HR, "ёрдам"))[0]
+    assert "«янги ходим»" in (await h.say(HR, "ёрдам"))[0]
+    assert "«янги ходим»" not in (await h.say(MENTOR, "ёрдам"))[0]  # an employee sees only their own commands
+    assert "Иш навбатингиз бўш" in (await h.say(HR, "иш навбати"))[0]
+    assert "Устозов Анвар" in (await h.say(HR, "ходимлар"))[0]
+    assert "Бу амал учун ҳуқуқингиз йўқ." == (await h.say(MENTOR, "/xodimlar"))[0]
+    replies = await h.say(HR, "E-0002")
+    assert "Устозов Анвар" in replies[0] and "лавозими:" in replies[0]
+    replies = await h.say(HR, "E-0002 лавозими: Катта сотувчи-маслаҳатчи")
+    assert "Тасдиқлайсизми?" in replies[0]
+    assert "Бекор" in (await h.say(HR, "йўқ"))[0]
+    replies = await h.say(MENTOR, "мурожаат")
+    assert "1. Таътил" in replies[0] and "4. Маълумотнома керак" in replies[0]
+    replies = await h.say(MENTOR, "4")  # a certificate, by its number
+    assert "«Маълумотнома керак»" in replies[0]
+    replies = await h.say(MENTOR, "Банк учун иш жойидан маълумотнома керак")
+    assert "Мурожаат қабул қилинди: HR-" in replies[-1]
+    replies = await h.say(MENTOR, "лотинда ёзинг")
+    assert replies[-1] == cyrillic_to_latin("Тил сақланди. Бундан буён шу тилда ёзаман.")
+    no_buttons(h)
 
 
 async def test_replayed_update_is_handled_once(h):

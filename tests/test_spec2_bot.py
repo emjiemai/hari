@@ -18,7 +18,7 @@ from tests.apply_fixtures import APPLICANT, h_apply, h_apply_done  # noqa: F401 
 from tests.apply_fixtures import HR as A_HR
 from tests.apply_fixtures import OWNER as A_OWNER
 from tests.conftest import FakeBot, at_tashkent
-from tests.test_bot_flow import Harness, btn
+from tests.test_bot_flow import Harness
 
 OWNER, HR, BOSS, ME, LAWYER = 701, 702, 703, 704, 705
 MONDAY = date(2026, 11, 9)
@@ -41,11 +41,11 @@ async def cases(session_scope) -> list[HRCase]:
 
 # --------------------------------------------------------------------------- complaints (T16)
 
-async def test_complaint_from_the_menu_asks_who_it_is_about_and_avoids_them(h, session_scope):
+async def test_complaint_from_the_list_asks_who_it_is_about_and_avoids_them(h, session_scope):
     await h.say(ME, "Мурожаат")
-    replies = await h.press(ME, btn(h, ME, "Шикоят"))
-    assert "Шикоят кимга оид?" in replies[0]
-    await h.press(ME, btn(h, ME, "Бевосита раҳбарим"))
+    replies = await h.say(ME, "шикоят")
+    assert "Шикоят кимга оид?" in replies[0] and "1. Бевосита раҳбарим" in replies[0]
+    await h.say(ME, "1")
     replies = await h.say(ME, "Мажлисда қўпол гапирди, 5 ноябрь")
     assert "Мурожаат қабул қилинди: HR-" in replies[-1] and "Кадрова Зайнаб" in replies[-1]
     assert any("Мажлисда қўпол гапирди" in t for t in h.to(HR))
@@ -62,9 +62,9 @@ async def test_complaint_from_the_menu_asks_who_it_is_about_and_avoids_them(h, s
 async def test_complaint_about_the_owner_never_reaches_an_owner(h, session_scope):
     replies = await h.say(ME, "Директор устидан шикоят қилмоқчиман, у мени ҳақорат қилди")
     assert "шикоят қилинган шахс уни текширмайди" in replies[0]
-    replies = await h.press(ME, btn(h, ME, "Мурожаат очиш"))
+    replies = await h.say(ME, "ҳа")
     assert "Шикоят кимга оид?" in replies[0] and await cases(session_scope) == []  # nothing routed yet
-    replies = await h.press(ME, btn(h, ME, "Компания раҳбари"))
+    replies = await h.say(ME, "компания раҳбари")  # beats "раҳбар" (my manager): the longer match wins
     assert "Кадрова Зайнаб" in replies[-1] and "мустақил масъул ҳали тайинланмаган" in replies[-1]
     assert "Мутлақ махфийликни ваъда қила олмайман" in replies[-1]
     (case,) = await cases(session_scope)
@@ -80,9 +80,9 @@ async def test_complaint_about_the_owner_never_reaches_an_owner(h, session_scope
 async def test_saying_i_want_to_leave_opens_one_minimal_hr_signal(h, session_scope):
     words = "Маошим кам, раҳбар билан келиша олмаяпман, ишдан кетмоқчиман"
     await h.say(ME, words)
-    (reply,) = h.to(ME)  # one message, nothing to press: the person is told what happened and who sees it
+    (reply,) = h.to(ME)  # one message, nothing to answer: the person is told what happened and who sees it
     assert "якуний қарор ёки ариза ҳисобланмайди" in reply and "HR масъулига қисқа хабар бердим" in reply
-    assert not h.buttons(ME)
+    assert "«ҳа»" not in reply
     await h.say(ME, "Ростдан ҳам кетишни ўйлаяпман")  # the same day: no second case
     (case,) = await cases(session_scope)
     assert case.type == "exit_intent" and "Маошим" not in case.body and "раҳбар билан" not in case.body
@@ -100,7 +100,7 @@ async def test_saying_i_want_to_leave_opens_one_minimal_hr_signal(h, session_sco
 
 async def test_formal_resignation_tells_hr_and_the_owner_at_once(h, session_scope):
     await h.say(ME, "Мурожаат")
-    replies = await h.press(ME, btn(h, ME, "Ишдан бўшаш аризаси"))
+    replies = await h.say(ME, "11")  # «Ишдан бўшаш аризаси», by its number
     assert "компания раҳбарига қисқа хабар берилади" in replies[0]
     await h.say(ME, "1 декабрдан ишдан бўшамоқчиман, сабаби шахсий")
     (case,) = await cases(session_scope)
@@ -122,12 +122,13 @@ async def test_step_sent_to_the_mentor_becomes_a_tracked_wait(session_scope, sta
         await O.create_plan(s, new, MONDAY)
     h = Harness()
     await h.say(ME, "Режам")
-    await h.press(ME, btn(h, ME, "Бажардим"))
+    await h.say(ME, "4 ни бажардим")
     await h.say(ME, "Мураббий билан учрашдим")
     async with session_scope() as s:
         item = (await s.execute(select(ResponseItem))).scalar_one()
         assert item.kind == "step" and item.delivery_status == "confirmed" and item.state == "open"
-    await h.press(BOSS, btn(h, BOSS, "Қабул"))
+    await h.say(BOSS, "қабул")
+    await h.say(BOSS, "ҳа")
     async with session_scope() as s:
         assert (await s.execute(select(ResponseItem))).scalar_one().state == "resolved"
 
@@ -136,7 +137,10 @@ async def test_step_sent_to_the_mentor_becomes_a_tracked_wait(session_scope, sta
 
 async def test_interview_score_is_given_by_a_person_and_completes_the_total(h_apply_done, session_scope):
     h = h_apply_done
-    await h.press(A_OWNER, btn(h, A_OWNER, "Суҳбатга"))
+    async with session_scope() as s:
+        number = (await s.execute(select(Application))).scalar_one().number
+    assert "Тасдиқлайсизми?" in (await h.say(A_OWNER, f"{number} ни суҳбатга чақир"))[0]
+    await h.say(A_OWNER, "ҳа")
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
         app.scorecard = {"rubric_version": "1", "recommendation": "ready", "summary": "", "missing": [], "total": None,
@@ -145,50 +149,51 @@ async def test_interview_score_is_given_by_a_person_and_completes_the_total(h_ap
                                       "learning": {"score": 2, "evidence": "д"},
                                       "collaboration": {"score": 3, "evidence": "д"}}}
         app_id = app.id
-    from hari.bot.ui import AppActCb
 
-    replies = await h.press(A_HR, AppActCb(action="score", app_id=app_id).pack())
+    replies = await h.say(A_HR, f"{number} суҳбат баҳоси")
     assert "Суҳбатни ўтказган киши қўяди" in replies[0]
-    replies = await h.press(A_HR, btn(h, A_HR, "4 —"))
+    replies = await h.say(A_HR, "4")
     assert "Тузилмали суҳбат (30%): 4" in replies[0] and "Умумий балл: 78.75 / 100" in replies[0]
     assert "қабул ёки рад чегараси эмас" in replies[0]
     async with session_scope() as s:
         app = await s.get(Application, app_id)
         assert app.scorecard["total"] == 78.75 and app.status == "interview"  # a total changes no status
-    await h.press(APPLICANT, AppActCb(action="iv0", app_id=app_id).pack())  # an applicant cannot score
+    await h.say(APPLICANT, f"{number} суҳбат баҳоси 0")  # an applicant cannot score
     async with session_scope() as s:
         assert (await s.get(Application, app_id)).scorecard["criteria"]["interview"]["score"] == 4
 
 
 async def test_deletion_request_is_decided_by_a_person(h_apply_done, session_scope):
     h = h_apply_done
-    await h.say(APPLICANT, "салом")  # the status reply carries the button
-    replies = await h.press(APPLICANT, btn(h, APPLICANT, "Маълумотимни ўчириш"))
+    assert "«маълумотимни ўчиринг»" in (await h.say(APPLICANT, "салом"))[0]  # the status reply says how
+    replies = await h.say(APPLICANT, "маълумотимни ўчиринг")
     assert "HR масъули кўриб чиқади" in replies[0]
-    assert "ўчиришни сўради" in h.to(A_HR)[-1]
-    assert "аллақачон" in (await h.press(APPLICANT, btn(h, APPLICANT, "Маълумотимни ўчириш")))[0]
+    assert "ўчиришни сўради" in h.to(A_HR)[-1] and "маълумотини ўчир»" in h.to(A_HR)[-1]
+    assert "аллақачон" in (await h.say(APPLICANT, "маълумотимни ўчиринг"))[0]
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
         assert app.full_name == "Алиев Вали" and app.deletion_requested_at is not None  # asked, not yet deleted
-    replies = await h.press(A_HR, btn(h, A_HR, "Маълумотни ўчириш"))
+    replies = await h.say(A_HR, f"{app.number} маълумотини ўчир")
+    assert "қайтариб бўлмайди" in replies[0]
+    replies = await h.say(A_HR, "ҳа")
     assert "шахсий маълумот ўчирилди" in replies[0] and "ўчирилди" in h.to(APPLICANT)[-1]
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
         assert app.full_name == "[ўчирилган]" and app.phone == "" and app.status == "withdrawn" and app.number
 
 
-async def test_legal_hold_blocks_the_delete_button(h_apply_done, session_scope, staff):
+async def test_legal_hold_blocks_deletion(h_apply_done, session_scope, staff):
     h = h_apply_done
     async with session_scope() as s:
         await staff(s, "Юристов Камол", "lawyer", tg=LAWYER)
-    await h.say(APPLICANT, "салом")
-    await h.press(APPLICANT, btn(h, APPLICANT, "Маълумотимни ўчириш"))
-    delete = btn(h, A_HR, "Маълумотни ўчириш")
-    replies = await h.press(A_HR, btn(h, A_HR, "Сақлаш"))
+        number = (await s.execute(select(Application))).scalar_one().number
+    await h.say(APPLICANT, "маълумотимни ўчиринг")
+    await h.say(A_HR, f"{number} legal hold")
+    replies = await h.say(A_HR, "ҳа")
     assert "legal hold ўрнатилди" in replies[0] and "юристга хабар берилди" in replies[0]
     assert "legal hold" in h.to(LAWYER)[-1] and "қонуний сабабга кўра сақланмоқда" in h.to(APPLICANT)[-1]
-    await h.press(A_OWNER, delete)  # anyone pressing delete afterwards is refused
-    assert any("Legal hold ўрнатилган" in a for a in h.session.alerts)
+    await h.say(A_OWNER, f"{number} маълумотини ўчир")  # anyone deleting afterwards is refused
+    assert "Legal hold ўрнатилган" in (await h.say(A_OWNER, "ҳа"))[0]
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
         assert app.full_name == "Алиев Вали" and app.legal_hold is True and app.purged_at is None
@@ -200,19 +205,34 @@ async def test_role_change_needs_the_owners_one_time_confirmation(h, session_sco
     assert await h.say(HR, "/rol E-0004 manager") == ["Бу амал учун ҳуқуқингиз йўқ."]
     replies = await h.say(OWNER, "/rol E-0004 hr")
     assert "Роль ўзгариши лойиҳаси: E-0004 Аълоев Анвар" in replies[0] and "Ходим → HR" in replies[0]
-    confirm = btn(h, OWNER, "Тасдиқлаш")
     async with session_scope() as s:
         me = (await s.execute(select(Employee).where(Employee.code == "E-0004"))).scalar_one()
         assert me.role == "employee"  # a draft changes nothing
-    await h.press(HR, confirm)  # someone else's press: refused
-    assert any("фақат эгаси" in a for a in h.session.alerts)
-    replies = await h.press(OWNER, confirm)
+    await h.say(HR, "ҳа")  # someone else's «ҳа» is in their own chat: it confirms nothing of the owner's
+    async with session_scope() as s:
+        assert (await s.execute(select(Employee).where(Employee.code == "E-0004"))).scalar_one().role == "employee"
+    replies = await h.say(OWNER, "ҳа")
     assert "роль — HR" in replies[-1]
-    await h.press(OWNER, confirm)  # the same approval again
-    assert any("аллақачон ишлатилган" in a for a in h.session.alerts)
+    replies = await h.say(OWNER, "ҳа")  # the same «ҳа» again: nothing is waiting any more
+    assert not any("роль — " in r for r in replies)
     async with session_scope() as s:
         me = (await s.execute(select(Employee).where(Employee.code == "E-0004"))).scalar_one()
         assert me.role == "hr" and (await s.execute(select(Approval))).scalar_one().used_at is not None
+
+
+async def test_an_old_role_draft_cannot_be_confirmed_twice(h, session_scope):
+    """The approval is used once: a second draft confirmation with the same approval id is refused (T20)."""
+    from hari.bot.context import Pending
+
+    await h.say(OWNER, "/rol E-0004 hr")
+    key = h.dp.storage.storage  # the waiting «ҳа» lives in the chat's form data
+    pending = next(v for v in key.values() if v.data.get("pending"))
+    saved = dict(pending.data["pending"])
+    await h.say(OWNER, "ҳа")
+    # replay the same pending confirmation, as a forged second «ҳа» would
+    pending.state, pending.data["pending"] = Pending.confirm.state, saved
+    replies = await h.say(OWNER, "ҳа")
+    assert "аллақачон ишлатилган" in replies[0]
 
 
 # --------------------------------------------------------------------------- the owner's digest

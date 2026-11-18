@@ -40,7 +40,7 @@ class ScriptedLLM:
                                        "келишинг.", "kind": "grounded", "source_ids": [ex_id], "offer": None}, "fake")
         # a follow-up: only answerable from RECENT CONVERSATION
         assert "<<<HISTORY" in user and "Kasalman" in user, "the earlier turn did not reach the model"
-        return LLMReply({"answer": "Раҳбарингизга хабар бериш учун пастдаги тугма орқали мурожаат очинг.",
+        return LLMReply({"answer": "Раҳбарингизга хабар бериш учун мурожаат очиш мумкин.",
                          "kind": "grounded", "source_ids": [ex_id], "offer": "leave"}, "fake")
 
 
@@ -59,8 +59,8 @@ async def test_screenshot_conversation_ends_in_a_request_not_a_question(h, kb): 
     assert "Тузалиб кетинг" in first[0]
 
     second = await h.say(EMP, "ha tayyorlab yubor")
-    assert "тугма орқали" in second[0] and "Айнан қайси" not in second[0]
-    assert any(text.startswith("Мурожаат очиш") for text, _ in h.buttons(EMP))
+    assert "мурожаат очиш мумкин" in second[0] and "Айнан қайси" not in second[0]
+    assert "Мурожаат очай десангиз, «ҳа» деб ёзинг." in second[0]  # how to open it: by writing
 
     calls_before = len(ScriptedLLM.calls)
     third = await h.say(EMP, "tasdiqlayman")
@@ -72,7 +72,7 @@ async def test_screenshot_conversation_ends_in_a_request_not_a_question(h, kb): 
 
 async def test_yes_without_an_offer_goes_to_the_model_with_context(h, kb):  # noqa: F811
     await h.say(EMP, "Kasalman, ishga kelolmayman")
-    replies = await h.say(EMP, "ha")  # no button was shown: nothing is opened on a bare "yes"
+    replies = await h.say(EMP, "ha")  # nothing was offered: nothing is opened on a bare "yes"
     assert "Мурожаат қабул қилинди" not in " ".join(replies)
     assert "<<<HISTORY" in ScriptedLLM.calls[-1]
 

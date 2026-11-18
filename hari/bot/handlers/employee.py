@@ -1,4 +1,7 @@
-"""What every verified employee can do: plan, steps, documents, requests, profile, questions."""
+"""What every verified employee can do by writing: plan, steps, documents, requests, profile, questions.
+
+The functions named in `ACTIONS` are run by hari.bot.handlers.chat once it knows what a message asks.
+The forms below (a proof, the text of a request, which kind of request) wait for the next message."""
 
 from __future__ import annotations
 
@@ -6,37 +9,56 @@ from datetime import timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction
-from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import Message
 from sqlalchemy import select
 
 from hari import cases as C
-from hari import digest, nonresponse
+from hari import digest, memory, nonresponse
+from hari import intent as I
 from hari import onboarding as O
 from hari.access import can_read_document
-from hari import memory
-from hari.answer import answer_question
-from hari.guard import is_consent
+from hari.answer import answer_question, source_line
+from hari.guard import match_rule
 from hari.bot import texts as T
-from hari.bot.common import handles_work, staff_by_tg
+from hari.bot.common import staff_by_tg
+from hari.bot.context import Ctx, ask_confirm, ask_pick
 from hari.bot.notifications import acceptor_label, tell_case_handler, tell_step_acceptor
-from hari.bot.ui import (
-    AboutCb, CaseTypeCb, DocCb, HelpfulCb, OfferCaseCb, PickCb, StepCb, apply_button, inline, main_menu, notify,
-)
+from hari.bot.ui import notify
 from hari.config import settings
-from hari.db.models import AnswerLog, Employee, KnowledgeChunk, KnowledgeDocument
+from hari.db.models import Employee, KnowledgeChunk, KnowledgeDocument, OnboardingStep
 from hari.db.session import session_scope
 from hari.knowledge.search import Hit
-from hari.answer import source_line
-from hari.worktime import fmt, now_utc, today_local
+from hari.translit import normalize
+from hari.worktime import fmt, now_utc, today_local, work_days_between
 
 router = Router(name="employee")
 
-# Types an employee picks from the menu ("question" is only offered after an unanswered question).
+# Kinds an employee can open by writing ("question" is only offered after an unanswered question).
 MENU_CASE_TYPES = ["leave", "schedule", "timesheet", "certificate", "data_fix", "training",
                    "pay_question", "legal", "complaint", "support", "resignation", "other"]
+# Words that pick a kind from the typed list, besides its number and label.
+CASE_WORDS = {
+    "leave": ("таътил", "отпуск", "касал", "бўлмайман", "отгул", "больнич"),
+    "schedule": ("жадвал", "масофавий", "график", "удалён", "удален"),
+    "timesheet": ("табель", "давомат"),
+    "certificate": ("маълумотнома", "справк"),
+    "data_fix": ("профил", "хато маълумот"),
+    "training": ("ўқиш", "тренинг", "обучени"),
+    "pay_question": ("иш ҳақи", "маош", "зарплат"),
+    "legal": ("ҳуқуқий", "шартнома", "юрид", "договор"),
+    "complaint": ("шикоят", "жалоб"),
+    "support": ("суҳбат", "қўллаб", "поддерж"),
+    "resignation": ("бўшаш", "ариза ёзиб кет", "увольн"),
+    "other": ("бошқа", "другое"),
+}
+ABOUT_WORDS = {
+    "manager": ("бевосита раҳбарим", "раҳбарим", "раҳбар", "бошлиғим", "руководител", "начальник", "manager"),
+    "hr": ("hr масъули", "hr", "ҳр", "кадр", "эйчар"),
+    "owner": ("компания раҳбари", "эгаси", "директор", "раҳбарият", "владел", "owner"),
+    "other": ("бошқа ходим", "бошқа", "ҳамкасб", "коллег", "другое"),
+}
 
 
 class AskProof(StatesGroup):
@@ -44,70 +66,108 @@ class AskProof(StatesGroup):
 
 
 class NewCase(StatesGroup):
+    kind = State()
+    about = State()
     body = State()
 
 
-# --------------------------------------------------------------------------- plan
+# --------------------------------------------------------------------------- the plan and its steps
 
-def _plan_text(emp: Employee, plan, today) -> tuple[str, list]:  # noqa: ANN001
+async def my_steps(session, emp: Employee) -> list[tuple[str, OnboardingStep]]:  # noqa: ANN001
+    """The steps of this person's plan whose day has come and that are still open, by their number
+    in the plan (the number «режам» shows)."""
+    plan = await O.get_plan(session, emp.id)
+    if plan is None:
+        return []
+    due = {s.id for s in O.due_open_steps(emp, plan, today_local())}
+    return [(str(n), s) for n, s in enumerate(plan.steps, start=1) if s.id in due or s.status == "submitted"]
+
+
+def steps_context(steps: list[tuple[str, OnboardingStep]]) -> list[dict]:
+    return [{"ref": ref, "title": s.title, "kind": s.kind, "status": s.status} for ref, s in steps]
+
+
+def _plan_text(emp: Employee, plan, today) -> str:  # noqa: ANN001
     done, total = O.progress(plan)
     due = {s.id for s in O.due_open_steps(emp, plan, today)}
-    from hari.worktime import work_days_between
-
     elapsed = work_days_between(emp, plan.started_on, today)
     lines = [f"Мослашув режаси — {done}/{total} қадам қабул қилинган", f"Бошланган: {plan.started_on:%d.%m.%Y}"]
     phase = None
-    for s in plan.steps:
+    for n, s in enumerate(plan.steps, start=1):
         if s.phase != phase:
             phase = s.phase
             lines.append(f"\n{O.PHASE_LABELS.get(phase, phase)}")
         icon = T.STEP_ICONS.get(s.status, "•") if s.day_offset <= elapsed or s.status != "pending" else T.STEP_ICON_FUTURE
-        lines.append(f"{icon} {s.title} — {T.KIND_LABELS[s.kind]}, қабул: {T.ACCEPTOR_LABELS[s.acceptor]}")
+        lines.append(f"{icon} {n}. {s.title} — {T.KIND_LABELS[s.kind]}, қабул: {T.ACCEPTOR_LABELS[s.acceptor]}")
         if s.status == "returned" and s.return_reason:
             lines.append(f"   Сабаб: {s.return_reason}")
-    buttons = []
-    for s in plan.steps:
-        if s.id not in due:
-            continue
-        if s.kind == "read":
-            row = [(f"Танишдим: {s.title}", StepCb(action="ack", step_id=s.id))]
-            if s.doc_id:
-                row.insert(0, ("Ўқиш", DocCb(doc_id=s.doc_id)))
-            buttons.append(row)
-        else:
-            buttons.append([(f"Бажардим: {s.title}", StepCb(action="done", step_id=s.id))])
-    if due:
-        lines.append("\nБугунги очиқ қадамлар пастда.")
-    return "\n".join(lines), buttons
+    open_steps = [(n, s) for n, s in enumerate(plan.steps, start=1) if s.id in due]
+    if open_steps:
+        lines.append("\nБугунги очиқ қадамлар:")
+        for n, s in open_steps:
+            if s.kind == "read":
+                lines.append(f"• {n}. {s.title} — ўқиш: «{n} ни очинг», ўқиб бўлгач: «{n} ни ўқидим»")
+            else:
+                lines.append(f"• {n}. {s.title} — бажаргач ёзинг: «{n} ни бажардим: нима қилдингиз» "
+                             "(фото ёки файл ҳам бўлади)")
+    return "\n".join(lines)
 
 
-@router.message(F.text.in_(T.both(T.BTN_PLAN)))
-@router.message(Command("reja"))
-async def show_plan(message: Message, state: FSMContext) -> None:
-    await state.clear()
+async def plan(ctx: Ctx, args: dict) -> None:
+    await ctx.state.clear()
     async with session_scope() as session:
-        emp = await staff_by_tg(session, message.from_user.id)
-        if emp is None:
-            await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id))
+        found = await O.get_plan(session, ctx.emp.id)
+        if found is None:
+            await ctx.say("Сизга ҳали мослашув режаси бириктирилмаган. Керак бўлса, «мурожаат» деб ёзиб, "
+                          "HRдан сўранг.")
             return
-        plan = await O.get_plan(session, emp.id)
-        if plan is None:
-            await message.answer(T.say(emp, "Сизга ҳали мослашув режаси бириктирилмаган. Керак бўлса, "
-                                            "«Мурожаат» орқали HRдан сўранг."))
-            return
-        text, buttons = _plan_text(emp, plan, today_local())
-    await message.answer(T.say(emp, text), reply_markup=inline(
-        [[(T.say(emp, t), cb) for t, cb in row] for row in buttons]) if buttons else None)
+        text = _plan_text(ctx.emp, found, today_local())
+    await ctx.say(text)
 
 
-@router.callback_query(DocCb.filter())
-async def show_doc(query: CallbackQuery, callback_data: DocCb) -> None:
+def _match_step(ref: object, steps: list[tuple[str, OnboardingStep]], text: str = "") -> OnboardingStep | None:
+    """A step by its number ("2", "2-қадам") or by words of its title."""
+    if isinstance(ref, int):
+        ref = str(ref)
+    if isinstance(ref, str) and ref.strip():
+        digits = "".join(ch for ch in ref if ch.isdigit())
+        for r, s in steps:
+            if digits and r == digits:
+                return s
+    words = normalize((text or (ref if isinstance(ref, str) else "")).lower())
+    hits = [s for _, s in steps if normalize(s.title.lower()) and normalize(s.title.lower()) in words]
+    return hits[0] if len(hits) == 1 else None
+
+
+async def _pick_step(ctx: Ctx, args: dict, action: str, kinds: set[str], question: str) -> OnboardingStep | None:
+    """Resolve args["step"] to one of this person's open steps of these kinds; asks which when unclear."""
     async with session_scope() as session:
-        emp = await staff_by_tg(session, query.from_user.id)
-        doc = await session.get(KnowledgeDocument, callback_data.doc_id)
+        steps = [(r, s) for r, s in await my_steps(session, ctx.emp) if s.kind in kinds]
+        if args.get("step_id"):
+            step = await session.get(OnboardingStep, args["step_id"])
+            if step is not None and any(s.id == step.id for _, s in steps):
+                return step
+        step = _match_step(args.get("step"), steps, ctx.text if ctx.text and not args.get("step") else "")
+    if step is None and len(steps) == 1:
+        step = steps[0][1]
+    if step is not None:
+        return step
+    if not steps:
+        await ctx.say("Ҳозир бундай очиқ қадамингиз йўқ. Режани кўриш учун «режам» деб ёзинг.")
+        return None
+    await ask_pick(ctx, question, action, args, "step", [(r, s.title) for r, s in steps])
+    return None
+
+
+async def read_doc(ctx: Ctx, args: dict) -> None:
+    step = await _pick_step(ctx, args, "read_doc", {"read"}, "Қайси қадамнинг ҳужжатини очай?")
+    if step is None:
+        return
+    async with session_scope() as session:
+        doc = await session.get(KnowledgeDocument, step.doc_id) if step.doc_id else None
         # Opening checks the right again; an unknown and a forbidden document look the same (spec §22).
-        if emp is None or doc is None or not can_read_document(emp, doc, today_local()):
-            await query.answer(T.say(emp, "Ҳужжат ҳозир очиқ эмас ёки ҳали тасдиқланмаган."), show_alert=True)
+        if doc is None or not can_read_document(ctx.emp, doc, today_local()):
+            await ctx.say("Ҳужжат ҳозир очиқ эмас ёки ҳали тасдиқланмаган.")
             return
         chunks = (await session.execute(
             select(KnowledgeChunk).where(KnowledgeChunk.doc_id == doc.doc_id, KnowledgeChunk.doc_version == doc.version)
@@ -115,69 +175,58 @@ async def show_doc(query: CallbackQuery, callback_data: DocCb) -> None:
         )).scalars().all()
     body = "\n\n".join(f"{c.section}\n{c.text}" if c.section != doc.title else c.text for c in chunks)
     hit = Hit("", doc.doc_id, doc.title, doc.version, "", "", 0)
-    text = f"{doc.title}\n\n{body}"[:3600] + f"\n\n{source_line([hit])}"
-    await query.message.answer(T.say(emp, text))
-    await query.answer()
+    await ctx.say(f"{doc.title}\n\n{body}"[:3600] + f"\n\n{source_line([hit])}\n\nЎқиб бўлгач, «ўқидим» деб ёзинг.")
 
 
-@router.callback_query(StepCb.filter(F.action == "ack"))
-async def ack_step(query: CallbackQuery, callback_data: StepCb) -> None:
-    async with session_scope() as session:
-        emp = await staff_by_tg(session, query.from_user.id)
-        if emp is None:
-            await query.answer(T.NOT_ALLOWED, show_alert=True)
-            return
-        try:
-            step = await O.acknowledge(session, emp, callback_data.step_id)
-        except O.StepError:
-            await query.answer(T.say(emp, "Бу қадам аллақачон ёпилган ёки сизга тегишли эмас."), show_alert=True)
-            return
-        plan = await O.get_plan(session, emp.id)
-        finished = plan is not None and plan.status == "done"
-    await query.answer(T.say(emp, "Қайд этилди"))
-    await query.message.answer(T.say(emp, f"«{step.title}» — танишганингиз қайд этилди."))
-    if finished:
-        await query.message.answer(T.say(emp, T.PLAN_DONE))
-
-
-@router.callback_query(StepCb.filter(F.action == "done"))
-async def ask_proof(query: CallbackQuery, callback_data: StepCb, state: FSMContext) -> None:
-    async with session_scope() as session:
-        emp = await staff_by_tg(session, query.from_user.id)
-        step = await session.get(O.OnboardingStep, callback_data.step_id)
-        plan = await session.get(O.OnboardingPlan, step.plan_id) if step is not None else None
-    if emp is None or plan is None or plan.employee_id != emp.id:  # only a step of one's own plan
-        await query.answer(T.NOT_ALLOWED, show_alert=True)
+async def step_read(ctx: Ctx, args: dict) -> None:
+    step = await _pick_step(ctx, args, "step_read", {"read"}, "Қайси қадам билан танишдингиз?")
+    if step is None:
         return
-    await state.set_state(AskProof.waiting)
-    await state.update_data(step_id=step.id)
-    await query.message.answer(T.say(emp, T.ASK_PROOF.format(title=step.title, acceptor=acceptor_label(step))))
-    await query.answer()
-
-
-@router.message(AskProof.waiting, F.text | F.photo | F.document)
-async def receive_proof(message: Message, state: FSMContext, bot: Bot) -> None:
-    data = await state.get_data()
-    file_id = None
-    if message.photo:
-        file_id = f"photo:{message.photo[-1].file_id}"
-    elif message.document:
-        file_id = f"doc:{message.document.file_id}"
-    text = message.text or message.caption
     async with session_scope() as session:
-        emp = await staff_by_tg(session, message.from_user.id)
+        emp = await staff_by_tg(session, ctx.tg)
+        try:
+            step = await O.acknowledge(session, emp, step.id)
+        except O.StepError:
+            await ctx.say("Бу қадам аллақачон ёпилган ёки сизга тегишли эмас.")
+            return
+        found = await O.get_plan(session, emp.id)
+        finished = found is not None and found.status == "done"
+    await ctx.say(f"«{step.title}» — танишганингиз қайд этилди.")
+    if finished:
+        await ctx.say(T.PLAN_DONE)
+
+
+async def step_done(ctx: Ctx, args: dict) -> None:
+    step = await _pick_step(ctx, args, "step_done", {"task", "meeting"}, "Қайси қадамни бажардингиз?")
+    if step is None:
+        return
+    proof, file_id = args.get("proof"), args.get("file_id") or ctx.file_id
+    if not proof and not file_id:
+        await ctx.state.set_state(AskProof.waiting)
+        await ctx.state.update_data(step_id=step.id)
+        await ctx.say(T.ASK_PROOF.format(title=step.title, acceptor=acceptor_label(step)))
+        return
+    if not ctx.confirmed:
+        what = f"«{proof}»" if proof else "юборган файлингиз"
+        await ask_confirm(ctx, f"«{step.title}» натижаси сифатида {what}ни {acceptor_label(step)}га юбораман.",
+                          "step_done", {"step_id": step.id, "proof": proof, "file_id": file_id})
+        return
+    await _submit_proof(ctx.message, ctx.bot, ctx.tg, step.id, proof, file_id)
+
+
+async def _submit_proof(message: Message, bot: Bot, tg: int, step_id: str, text: str | None,
+                        file_id: str | None) -> None:
+    async with session_scope() as session:
+        emp = await staff_by_tg(session, tg)
         if emp is None:
-            await state.clear()
             return
         try:
-            step, owner = await O.submit(session, emp, data.get("step_id", ""), text, file_id)
+            step, owner = await O.submit(session, emp, step_id, text, file_id)
         except O.StepError as exc:
-            await state.clear()
             await message.answer(T.say(emp, "Натижа сақланмади: " + (
                 "матн ёки файл юборинг." if str(exc) == "no_proof" else "бу қадам сизга тегишли эмас ёки ёпилган.")))
             return
         acceptor = await O.acceptor_for(session, step, owner)
-    await state.clear()
     delivered = acceptor is not None and await tell_step_acceptor(bot, acceptor, owner, step)
     if acceptor is not None:  # the acceptor now owes an answer; whether the card arrived is recorded as is
         async with session_scope() as session:
@@ -187,74 +236,144 @@ async def receive_proof(message: Message, state: FSMContext, bot: Bot) -> None:
                                else T.PROOF_NO_ACCEPTOR))
 
 
+@router.message(AskProof.waiting, F.text | F.photo | F.document)
+async def receive_proof(message: Message, state: FSMContext, bot: Bot) -> None:
+    data = await state.get_data()
+    text = message.text or message.caption
+    await state.clear()
+    if message.text and I.is_no(message.text):
+        await message.answer(T.CANCELLED)
+        return
+    file_id = None
+    if message.photo:
+        file_id = f"photo:{message.photo[-1].file_id}"
+    elif message.document:
+        file_id = f"doc:{message.document.file_id}"
+    await _submit_proof(message, bot, message.from_user.id, data.get("step_id", ""), text, file_id)
+
+
+async def file_sent(ctx: Ctx) -> None:
+    """A photo or file with no words: the result of the one task step waiting, or the person says which."""
+    async with session_scope() as session:
+        steps = [(r, s) for r, s in await my_steps(session, ctx.emp)
+                 if s.kind in ("task", "meeting") and s.status in ("pending", "returned")]
+    if not steps:
+        await ctx.say("Файлни олдим, лекин ҳозир натижа кутаётган қадамингиз йўқ. Нима учун юборганингизни ёзинг.")
+        return
+    await step_done(ctx, {"step": steps[0][0] if len(steps) == 1 else None, "file_id": ctx.file_id})
+
+
 # --------------------------------------------------------------------------- requests
 
-def _case_type_buttons(emp: Employee):  # noqa: ANN202
-    rows = [[(T.say(emp, C.CASE_TYPES[s].label), CaseTypeCb(slug=s))] for s in MENU_CASE_TYPES]
-    return inline(rows)
+def _case_options() -> list[tuple[str, tuple[str, ...]]]:
+    return [(s, (C.CASE_TYPES[s].label, *CASE_WORDS.get(s, ()))) for s in MENU_CASE_TYPES]
 
 
-@router.message(F.text.in_(T.both(T.BTN_CASE)))
-@router.message(Command("murojaat"))
-async def case_menu(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    async with session_scope() as session:
-        emp = await staff_by_tg(session, message.from_user.id)
-    if emp is None:
-        await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id))
+def _case_list() -> str:
+    return "\n".join(f"{i}. {C.CASE_TYPES[s].label}" for i, s in enumerate(MENU_CASE_TYPES, start=1))
+
+
+def _about_list() -> str:
+    return "\n".join(f"{i}. {label}" for i, label in enumerate(T.ABOUT_LABELS.values(), start=1))
+
+
+async def new_case(ctx: Ctx, args: dict) -> None:
+    kind, about, text = args.get("type"), args.get("about"), args.get("text")
+    if kind not in MENU_CASE_TYPES:
+        await ctx.state.set_state(NewCase.kind)
+        await ctx.say(f"{T.CASE_PICK}\n\n{_case_list()}\n\nБекор қилиш: «бекор».")
         return
-    await message.answer(T.say(emp, T.CASE_PICK), reply_markup=_case_type_buttons(emp))
-
-
-@router.callback_query(CaseTypeCb.filter())
-async def case_type_picked(query: CallbackQuery, callback_data: CaseTypeCb, state: FSMContext) -> None:
-    async with session_scope() as session:
-        emp = await staff_by_tg(session, query.from_user.id)
-    ctype = C.CASE_TYPES.get(callback_data.slug)
-    if emp is None or ctype is None:
-        await query.answer(T.NOT_ALLOWED, show_alert=True)
-        return
-    await query.answer()
-    if ctype.slug == "complaint":
+    ctype = C.CASE_TYPES[kind]
+    if kind == "complaint" and about not in T.ABOUT_LABELS:
         # First who it is about, so the request can never be routed to that person (spec 2.0 §2, T16).
-        await state.update_data(complaint_body=None)
-        await query.message.answer(T.say(emp, T.COMPLAINT_ABOUT), reply_markup=_about_buttons(emp))
+        await ctx.state.set_state(NewCase.about)
+        await ctx.state.update_data(case_type=kind, body=text)
+        await ctx.say(f"{T.COMPLAINT_ABOUT}\n\n{_about_list()}")
         return
-    await state.set_state(NewCase.body)
-    await state.update_data(case_type=ctype.slug)
-    text = T.CASE_ASK_BODY.format(label=ctype.label)
-    if ctype.slug == "resignation":
-        text += "\n\n" + T.RESIGNATION_NOTE
-    await query.message.answer(T.say(emp, text))
-
-
-def _about_buttons(emp: Employee):  # noqa: ANN202
-    return inline([[(T.say(emp, label), AboutCb(target=target))] for target, label in T.ABOUT_LABELS.items()])
-
-
-@router.callback_query(AboutCb.filter())
-async def complaint_about(query: CallbackQuery, callback_data: AboutCb, state: FSMContext, bot: Bot) -> None:
-    async with session_scope() as session:
-        emp = await staff_by_tg(session, query.from_user.id)
-    if emp is None or callback_data.target not in T.ABOUT_LABELS:
-        await query.answer(T.NOT_ALLOWED, show_alert=True)
+    if not text:
+        await ctx.state.set_state(NewCase.body)
+        await ctx.state.update_data(case_type=kind, about=about)
+        body = T.CASE_ASK_BODY.format(label=ctype.label)
+        if kind == "resignation":
+            body += "\n\n" + T.RESIGNATION_NOTE
+        elif kind == "complaint":
+            body += "\n\n" + T.CASE_COMPLAINT_NOTE
+        await ctx.say(body)
         return
-    await query.answer()
-    await query.message.edit_reply_markup(reply_markup=None)
-    body = (await state.get_data()).get("complaint_body")
-    if body:  # the complaint was already written as a chat message: open it now
-        await state.clear()
-        await _open_and_tell(query.message, bot, query.from_user.id, "complaint", body, callback_data.target)
+    if not ctx.confirmed:
+        await ask_confirm(ctx, f"«{ctype.label}» мурожаатини очаман. Матни: «{text}».",
+                          "new_case", {"type": kind, "about": about, "text": text})
         return
-    await state.set_state(NewCase.body)
-    await state.update_data(case_type="complaint", about=callback_data.target)
-    ctype = C.CASE_TYPES["complaint"]
-    await query.message.answer(T.say(emp, T.CASE_ASK_BODY.format(label=ctype.label) + "\n\n" + T.CASE_COMPLAINT_NOTE))
+    await open_and_tell(ctx.message, ctx.bot, ctx.tg, kind, text, about)
 
 
-async def _open_and_tell(message: Message, bot: Bot, telegram_user_id: int, case_type: str, body: str,
-                         about_target: str | None = None, dedupe: str | None = None,
-                         quiet: bool = False) -> None:
+@router.message(NewCase.kind, F.text)
+async def case_kind(message: Message, state: FSMContext, bot: Bot) -> None:
+    await state.clear()
+    if I.is_no(message.text):
+        await message.answer(T.CANCELLED)
+        return
+    kind = I.choice(message.text, _case_options())
+    from hari.bot.handlers.chat import ctx_for  # here: chat imports this module
+
+    ctx = await ctx_for(message, state, bot)
+    if ctx is None:
+        return
+    if kind is not None and len(message.text.split()) <= 3:  # "1", "таътил": the kind, the text comes next
+        await new_case(ctx, {"type": kind})
+        return
+    # A description instead of a number: the kind comes from it, and the words are the request. A topic with
+    # a fixed safety rule (pay, complaint, …) takes the rule's kind and never goes to the AI.
+    rule = match_rule(message.text) if kind is None else None
+    if rule is not None:
+        kind = rule.case_type if rule.case_type in MENU_CASE_TYPES else None
+    elif kind is None and not settings.hari_paused:
+        async with session_scope() as session:
+            people = [(c, n) for c, n in (await session.execute(select(Employee.code, Employee.full_name))).all()]
+        found = await I.route(message.text, ["new_case"], {}, people)
+        if found is not None and found.args.get("type") in MENU_CASE_TYPES:
+            kind = found.args["type"]
+    await new_case(ctx, {"type": kind or "other", "about": None, "text": " ".join(message.text.split())})
+
+
+@router.message(NewCase.about, F.text)
+async def complaint_about(message: Message, state: FSMContext, bot: Bot) -> None:
+    data = await state.get_data()
+    await state.clear()
+    if I.is_no(message.text):
+        await message.answer(T.CANCELLED)
+        return
+    about = I.choice(message.text, list(ABOUT_WORDS.items()))
+    from hari.bot.handlers.chat import ctx_for
+
+    ctx = await ctx_for(message, state, bot)
+    if ctx is None:
+        return
+    if about is None:
+        await state.set_state(NewCase.about)
+        await state.update_data(case_type="complaint", body=data.get("body"))
+        await ctx.say(f"Тушунмадим. {T.COMPLAINT_ABOUT}\n\n{_about_list()}")
+        return
+    if data.get("body"):  # the complaint was already written: open it now (the person chose who it is about)
+        await open_and_tell(message, bot, message.from_user.id, "complaint", data["body"], about)
+        return
+    await new_case(ctx, {"type": "complaint", "about": about})
+
+
+@router.message(NewCase.body, F.text)
+async def case_body(message: Message, state: FSMContext, bot: Bot) -> None:
+    data = await state.get_data()
+    await state.clear()
+    if I.is_no(message.text):
+        await message.answer(T.CANCELLED)
+        return
+    await open_and_tell(message, bot, message.from_user.id, data.get("case_type", "other"), message.text,
+                        data.get("about"))
+
+
+async def open_and_tell(message: Message, bot: Bot, telegram_user_id: int, case_type: str, body: str,
+                        about_target: str | None = None, dedupe: str | None = None,
+                        quiet: bool = False) -> None:
     """Open the request, hand it to its handler and tell the requester who will see it.
     `quiet`: the requester was already told what happens (an exit-intent signal)."""
     alerts: list[tuple[Employee, str]] = []
@@ -279,7 +398,8 @@ async def _open_and_tell(message: Message, bot: Bot, telegram_user_id: int, case
             else:  # nobody holds the role: someone allowed must still see it, and the owner's digest lists it
                 for person in await _any_hr(session):
                     if C.can_handle_case(person, None, case.about_employee_id, case.about_role):
-                        await notify(bot, person, f"⚠️ {case.number} учун масъул топилмади. «Иш навбати»да кўринг.")
+                        await notify(bot, person, f"⚠️ {case.number} учун масъул топилмади. "
+                                                  f"Кўриш учун «{case.number}» деб ёзинг.")
                 await digest.add(session, f"unassigned:{case.id}", "unassigned", priority=20,
                                  fact=f"{case.number} мурожаати учун масъул топилмади.",
                                  impact="Мурожаат эгасиз қолди: биринчи жавоб муддати ўтиши мумкин.",
@@ -303,75 +423,71 @@ async def _any_hr(session) -> list[Employee]:  # noqa: ANN001
     return [r for r in rows if r.telegram_user_id]
 
 
-@router.message(NewCase.body, F.text)
-async def case_body(message: Message, state: FSMContext, bot: Bot) -> None:
-    data = await state.get_data()
-    await state.clear()
-    await _open_and_tell(message, bot, message.from_user.id, data.get("case_type", "other"), message.text,
-                         data.get("about"))
-
-
-@router.callback_query(OfferCaseCb.filter())
-async def offered_case(query: CallbackQuery, callback_data: OfferCaseCb, state: FSMContext, bot: Bot) -> None:
-    data = await state.get_data()
-    question = data.get("last_question")
-    await query.answer()
-    if not question:
-        await query.message.answer("Саволни қайта ёзинг ёки «Мурожаат» менюсидан фойдаланинг.")
-        return
-    await query.message.edit_reply_markup(reply_markup=None)
-    await _take_offer(query.message, bot, query.from_user.id, state, callback_data.slug, question)
-
-
-async def _take_offer(message: Message, bot: Bot, telegram_user_id: int, state: FSMContext, slug: str,
-                      question: str) -> None:
-    """The person accepted the request HARI offered, by the button or by answering "yes"."""
-    await state.update_data(last_question=None, offer=None)
+async def take_offer(ctx: Ctx, slug: str, question: str) -> None:
+    """The person answered «ҳа» to the request HARI offered after its answer."""
+    await ctx.state.update_data(last_question=None, offer=None)
     if slug == "complaint":  # ask who it is about before it is routed anywhere (T16)
-        async with session_scope() as session:
-            emp = await staff_by_tg(session, telegram_user_id)
-        if emp is None:
-            return
-        await state.update_data(complaint_body=question)
-        await message.answer(T.say(emp, T.COMPLAINT_ABOUT), reply_markup=_about_buttons(emp))
+        await ctx.state.set_state(NewCase.about)
+        await ctx.state.update_data(case_type="complaint", body=question)
+        await ctx.say(f"{T.COMPLAINT_ABOUT}\n\n{_about_list()}")
         return
-    await _open_and_tell(message, bot, telegram_user_id, slug, question)
+    await open_and_tell(ctx.message, ctx.bot, ctx.tg, slug, question)
 
 
-@router.message(F.text.in_(T.both(T.BTN_MY_CASES)))
-@router.message(Command("murojaatlarim"))
-async def my_cases(message: Message, state: FSMContext) -> None:
-    await state.clear()
+STATUS_WORDS = {"submitted": "юборилди", "accepted": "кўриб чиқилмоқда", "in_review": "кўриб чиқилмоқда",
+                "decided": "жавоб берилди, иш очиқ", "closed": "ёпилди", "rejected": "рад этилди"}
+
+
+async def my_cases(ctx: Ctx, args: dict) -> None:
+    await ctx.state.clear()
     async with session_scope() as session:
-        emp = await staff_by_tg(session, message.from_user.id)
-        if emp is None:
-            await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id))
-            return
-        rows = await C.mine(session, emp)
+        rows = await C.mine(session, ctx.emp)
     if not rows:
-        await message.answer(T.say(emp, "Сизда ҳали мурожаат йўқ."))
+        await ctx.say("Сизда ҳали мурожаат йўқ. Очиш учун нима кераклигини ёзинг, масалан: «маълумотнома керак».")
         return
-    labels = {"submitted": "юборилди", "accepted": "кўриб чиқилмоқда", "in_review": "кўриб чиқилмоқда",
-              "decided": "жавоб берилди, иш очиқ", "closed": "ёпилди", "rejected": "рад этилди"}
     lines = ["Мурожаатларингиз:"]
     for c in rows:
-        lines.append(f"\n{c.number} — {c.title}\nҲолат: {labels.get(c.status, c.status)}")
+        lines.append(f"\n{c.number} — {c.title}\nҲолат: {STATUS_WORDS.get(c.status, c.status)}")
         if c.decision:
             lines.append(f"Жавоб: {c.decision}")
-    await message.answer(T.say(emp, "\n".join(lines)))
+    await ctx.say("\n".join(lines))
+
+
+async def case_show(ctx: Ctx, args: dict) -> None:
+    """A request by number: its handler sees the card, its requester the status; anyone else nothing."""
+    from hari.bot.notifications import case_card
+
+    async with session_scope() as session:
+        case = await C.get_by_number(session, args.get("number") or "")
+        if case is None:
+            await ctx.say("Бундай мурожаат топилмади.")
+            return
+        if C.can_handle_case(ctx.emp, case.assignee_id, case.about_employee_id, case.about_role) \
+                and case.requester_id != ctx.emp.id:
+            requester = await session.get(Employee, case.requester_id)
+            about = await session.get(Employee, case.about_employee_id) if case.about_employee_id else None
+            text = (f"{case_card(case, requester, about)}\nҲолат: {STATUS_WORDS.get(case.status, case.status)}"
+                    + (f"\nЖавоб: {case.decision}" if case.decision else "")
+                    + f"\n\nЖавоб бериш: «{case.number} га жавоб: …»")
+        elif case.requester_id == ctx.emp.id:
+            text = (f"{case.number} — {case.title}\nҲолат: {STATUS_WORDS.get(case.status, case.status)}"
+                    + (f"\nЖавоб: {case.decision}" if case.decision else ""))
+        else:
+            text = "Бундай мурожаат топилмади."  # someone else's request looks like a missing one
+    await ctx.say(text)
 
 
 # --------------------------------------------------------------------------- profile
 
-@router.message(F.text.in_(T.both(T.BTN_PROFILE)))
-@router.message(Command("profilim"))
-async def profile(message: Message, state: FSMContext) -> None:
-    await state.clear()
+LANG_WORDS = {"uz_cyrl": ("кирилл", "кириллда", "ўзбекча кирилл", "крилл"),
+              "uz_latn": ("лотин", "лотинда", "lotin", "лотиница", "латин"),
+              "ru": ("рус", "русча", "русский", "по русски", "по-русски", "rus")}
+
+
+async def my_profile(ctx: Ctx, args: dict) -> None:
+    await ctx.state.clear()
     async with session_scope() as session:
-        emp = await staff_by_tg(session, message.from_user.id)
-        if emp is None:
-            await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id))
-            return
+        emp = await session.get(Employee, ctx.emp.id)
         manager = await session.get(Employee, emp.manager_id) if emp.manager_id else None
         mentor = await session.get(Employee, emp.mentor_id) if emp.mentor_id else None
     lang = {"uz_cyrl": "ўзбек (кирилл)", "uz_latn": "ўзбек (лотин)", "ru": "рус"}[emp.language]
@@ -380,105 +496,77 @@ async def profile(message: Message, state: FSMContext) -> None:
         f"Раҳбар: {manager.full_name if manager else '—'}", f"Мураббий: {mentor.full_name if mentor else '—'}",
         f"Бошлаш санаси: {emp.start_date:%d.%m.%Y}" if emp.start_date else "Бошлаш санаси: —",
         f"Иш вақти: {emp.work_start_hour}:00–{emp.work_end_hour}:00", f"Тил: {lang}", "",
-        "Лавозим, раҳбар ва жадвални фақат HR ўзгартиради. Хато бўлса, тузатиш сўровини юборинг.",
+        "Лавозим, раҳбар ва жадвални фақат HR ўзгартиради. Хато бўлса, «профилимда хато бор: …» деб ёзинг.",
+        "Тилни ўзгартириш: «лотинда ёзинг», «кириллда ёзинг» ёки «пишите по-русски».",
     ]
-    text = "\n".join(lines)
-    await message.answer(T.say(emp, text), reply_markup=inline([
-        [(T.say(emp, "Хатони тузатиш"), CaseTypeCb(slug="data_fix"))],
-        [("Ўзбек (кирилл)", PickCb(field="mylang", value="uz_cyrl")),
-         ("O'zbek (lotin)", PickCb(field="mylang", value="uz_latn")),
-         ("Русский", PickCb(field="mylang", value="ru"))],
-    ]))
+    await ctx.say("\n".join(lines))
 
 
-@router.callback_query(PickCb.filter(F.field == "mylang"))
-async def set_language(query: CallbackQuery, callback_data: PickCb) -> None:
+async def set_language(ctx: Ctx, args: dict) -> None:
+    lang = args.get("lang")
+    if lang not in I.LANGS:
+        lang = I.choice(ctx.text, list(LANG_WORDS.items()))
+    if lang not in I.LANGS:
+        await ctx.say("Қайси тилда ёзай: кирилл, лотин ёки рус?")
+        return
     async with session_scope() as session:
-        emp = await staff_by_tg(session, query.from_user.id)
-        if emp is None or callback_data.value not in ("uz_cyrl", "uz_latn", "ru"):
-            await query.answer(T.NOT_ALLOWED, show_alert=True)
-            return
-        emp.language = callback_data.value
-        menu = main_menu(emp, await handles_work(session, emp))
-    await query.answer()
-    await query.message.answer(T.say(emp, "Тил сақланди. AI жавоблари шу тилда бўлади."), reply_markup=menu)
+        emp = await session.get(Employee, ctx.emp.id)
+        emp.language = lang
+    ctx.emp.language = lang
+    await ctx.say("Тил сақланди. Бундан буён шу тилда ёзаман.")
 
 
-# --------------------------------------------------------------------------- questions (catch-all)
-
-@router.callback_query(HelpfulCb.filter())
-async def helpful(query: CallbackQuery, callback_data: HelpfulCb) -> None:
+async def forget(ctx: Ctx, args: dict) -> None:
+    """The person erases what HARI remembers of their own chat (requests they opened stay)."""
+    await ctx.state.update_data(offer=None, last_question=None)
     async with session_scope() as session:
-        emp = await staff_by_tg(session, query.from_user.id)
-        log = await session.get(AnswerLog, callback_data.log_id)
-        if emp is not None and log is not None and log.employee_id == emp.id:
-            log.was_helpful = callback_data.ok
-    await query.answer("Раҳмат!")
-    await query.message.edit_reply_markup(reply_markup=None)
+        emp = await session.get(Employee, ctx.emp.id)
+        await memory.forget(session, emp)
+    await ctx.say(T.MEMORY_FORGOTTEN)
 
+
+async def help_(ctx: Ctx, args: dict) -> None:
+    await ctx.say(T.help_text(ctx.emp, ctx.works, ctx.manages))
+
+
+# --------------------------------------------------------------------------- questions
 
 FOLLOW_UP_MINUTES = 10  # a short reply joins the previous message in a request only within this time
 
 
-@router.message(Command("unut", "forget"))
-async def forget_chat(message: Message, state: FSMContext) -> None:
-    """The person erases what HARI remembers of their own chat (requests they opened stay)."""
-    await state.update_data(offer=None, last_question=None)
+async def question(ctx: Ctx, args: dict) -> None:
+    text = ctx.text
     async with session_scope() as session:
-        emp = await staff_by_tg(session, message.from_user.id)
-        if emp is None:
-            await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id), reply_markup=apply_button())
-            return
-        await memory.forget(session, emp)
-    await message.answer(T.say(emp, T.MEMORY_FORGOTTEN))
-
-
-@router.message(StateFilter(None), F.text)
-async def question(message: Message, state: FSMContext, bot: Bot) -> None:
-    data = await state.get_data()
-    offer, offered_for = data.get("offer"), data.get("last_question")
-    if offer and offered_for and is_consent(message.text):
-        # "ha", "tasdiqlayman", "yubor": the same as pressing the button HARI just showed.
-        await _take_offer(message, bot, message.from_user.id, state, offer, offered_for)
-        ctype = C.CASE_TYPES.get(offer)
-        if ctype is not None and ctype.privacy == "normal":  # a complaint, pay or legal request is not kept
-            async with session_scope() as session:
-                emp = await staff_by_tg(session, message.from_user.id)
-                if emp is not None:
-                    await memory.remember(session, emp, message.text, f"«{ctype.label}» мурожаати очилди.",
-                                          now_utc())
-        return
-    async with session_scope() as session:
-        emp = await staff_by_tg(session, message.from_user.id)
-        if emp is None:
-            await message.answer(T.UNKNOWN_USER.format(tg_id=message.from_user.id), reply_markup=apply_button())
-            return
-        await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+        emp = await session.get(Employee, ctx.emp.id)
+        await ctx.bot.send_chat_action(ctx.message.chat.id, ChatAction.TYPING)
         # Only this person's own earlier messages: the employee comes from their verified Telegram account.
         turns = await memory.recent(session, emp, now_utc())
-        result = await answer_question(session, emp, message.text, today_local(), history=turns)
+        result = await answer_question(session, emp, text, today_local(), history=turns)
         if result.outcome not in ("rule", "paused"):
             # A topic with a fixed safety reply is not kept: it must never reach the AI later either.
-            await memory.remember(session, emp, message.text, result.text, now_utc())
+            await memory.remember(session, emp, text, result.text, now_utc())
     # What a request opened from here will say: the message, and the one just before it when this is a
     # short follow-up in the same conversation ("I told you, my head hurts" means little to HR on its own).
     # Never an older message: the person did not choose to send last week's words to their manager.
-    body = message.text
-    if (result.outcome != "rule" and turns and len(message.text.split()) <= 6
+    body = text
+    if (result.outcome != "rule" and turns and len(text.split()) <= 6
             and now_utc() - turns[-1][3] <= timedelta(minutes=FOLLOW_UP_MINUTES)):
-        body = f"{turns[-1][0]}\n{message.text}"
-    await state.update_data(offer=result.offer_case, last_question=body if result.offer_case else None)
+        body = f"{turns[-1][0]}\n{text}"
+    await ctx.state.update_data(offer=result.offer_case, last_question=body if result.offer_case else None)
     if result.auto_case and not settings.hari_paused:
         # A stated wish to leave: HR gets the fact in HARI's own words, once a day at most — never the
         # message itself (spec 2.0 §18, T11). The reply above already told the person who sees it.
-        await _open_and_tell(message, bot, message.from_user.id, result.auto_case, C.EXIT_INTENT_BODY,
-                             dedupe=f"{result.auto_case}:{emp.id}:{today_local()}", quiet=True)
-    buttons = []
+        await open_and_tell(ctx.message, ctx.bot, ctx.tg, result.auto_case, C.EXIT_INTENT_BODY,
+                            dedupe=f"{result.auto_case}:{emp.id}:{today_local()}", quiet=True)
+    reply = result.text
     if result.offer_case:
-        label = "HR масъулига юбориш" if result.offer_case == "question" else "Мурожаат очиш"
-        buttons.append([(T.say(emp, label), OfferCaseCb(slug=result.offer_case))])
-    if result.outcome == "answered" and result.log_id:
-        buttons.append([("👍 Тушунарли", HelpfulCb(log_id=result.log_id, ok=True)),
-                        ("👎 Тушунарсиз", HelpfulCb(log_id=result.log_id, ok=False))])
+        reply += "\n\n" + (T.OFFER_QUESTION_HINT if result.offer_case == "question" else T.OFFER_CASE_HINT)
     # Model text is sent as plain text (no parse mode): nothing in it becomes a link or markup.
-    await message.answer(T.say(emp, result.text), reply_markup=inline(buttons) if buttons else None)
+    await ctx.say(reply)
+
+
+ACTIONS = {
+    "question": question, "help": help_, "plan": plan, "read_doc": read_doc, "step_read": step_read,
+    "step_done": step_done, "new_case": new_case, "my_cases": my_cases, "case_show": case_show,
+    "my_profile": my_profile, "set_language": set_language, "forget": forget,
+}

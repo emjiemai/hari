@@ -10,14 +10,38 @@ It shares no code, database or deployment with МИЯ (repository emjiemai/mgmg-
 Everything the bot says is Uzbek Cyrillic, with the polite «сиз» form. People who choose Latin see Latin.
 Code, comments and docs are in English.
 
+## No buttons: everything is typed
+
+HARI shows no buttons, no menu keyboard and no Menu command list. People write what they want in their own words
+(boss's decision, 18.11.2026). How a message becomes an action (`hari/intent.py`, `hari/bot/handlers/chat.py`):
+
+1. **Without AI** — set phrases, numbers and codes: «режам», «мурожаатларим», «иш навбати», «ходимлар»,
+   «аризалар», «HR-2026-11-0003 га жавоб: …», «A-2026-11-0001 рад эт: асос», «E-0003 лавозими: …»,
+   «E-0003 ролини hr қил», «123456789 ни ходим қилиб қўш», «лотинда ёзинг». The old slash commands still work
+   when typed. This keeps working when the AI is down or over its limit (A12).
+2. **Fixed safety topics** (pay, passwords, complaints, …) get their approved reply and never reach any AI call.
+3. **AI router** — anything else goes to the model with the list of actions *this person* may use and the items
+   they can act on (their open steps, their queue, applications) by reference. Staff names are replaced by their
+   codes and the text is masked before it leaves. The model only proposes; the server checks the right again.
+   Text an action carries (an answer, a reason, a proof) is used only if the person wrote it word for word.
+   When the AI can't be asked, likely readings («қабул», «2 ни ўқидим», «қайтар: …») are used; otherwise the
+   message is a question.
+4. **Nothing changes before «ҳа».** Every action others will see (accept/return a step, answer a request, decide
+   on an applicant, edit a card, change a role) first says what it will do and waits for «ҳа» / «йўқ».
+   When several items fit, HARI lists them numbered and the typed number decides.
+
+Choices inside forms are numbered lists (role, language, department, request type); logic questions for
+applicants are lettered А–Г because many answers are numbers. The AI router is an extra model call per typed
+message that is not a set phrase — count it in `LLM_DAILY_CALL_LIMIT`.
+
 ## What works now (phase 1, spec §26 weeks 5–8)
 
 | Area | What HARI does | Spec |
 | --- | --- | --- |
-| Employee card | HR fills it in the bot (➕ Янги ходим, 8 steps). The same card sent again makes no second person (A01) | §5 |
+| Employee card | HR fills it in the bot by writing «янги ходим» (8 typed steps). The same card sent again makes no second person (A01) | §5 |
 | Identity | A one-time link (72 h) binds the person's own Telegram account. One account = one person. Chat text never gives a role | §3, §5, §23 |
 | Access | Server-side checks for every document, step and request. A candidate or an unbound account sees nothing internal | §4 |
-| Knowledge answers | The AI writes each answer itself. It gets the documents found for the question plus all 150 approved scenarios (`knowledge/samples/HARI-QA-*`, made by `scripts/import_scenarios.py`) as worked examples, so a question worded differently still gets the scenario's rules and next steps. Only what this person may read. It must name what it relied on; the server adds «Манба: …». No basis → "тасдиқланган жавоб топилмади" + a button to send it to HR. Greetings and "are you working?" get a short reply without a source | §10, §12, §13, §24, §30 |
+| Knowledge answers | The AI writes each answer itself. It gets the documents found for the question plus all 150 approved scenarios (`knowledge/samples/HARI-QA-*`, made by `scripts/import_scenarios.py`) as worked examples, so a question worded differently still gets the scenario's rules and next steps. Only what this person may read. It must name what it relied on; the server adds «Манба: …». No basis → "тасдиқланган жавоб топилмади", and «ҳа» sends it to HR. Greetings and "are you working?" get a short reply without a source | §10, §12, §13, §24, §30 |
 | Safety rules | Pay, bank, other people's data, company finance, passwords, "I'm the director", prompt injection, complaints, legal disputes, personal crisis → fixed approved replies, never sent to the model | §23, HARI-008/042/086–097/126–129 |
 | Output checks | Answer with an unknown source, the «сен» form or something that looks like a card/passport/token is stopped | §30 |
 | No AI | No key, provider down or over limit: the approved excerpt with its source is shown instead (A12) | §28 |
@@ -46,7 +70,7 @@ Code, comments and docs are in English.
 | Knowledge | Passport gains `source_type`, `publisher`, `canonical_url`, `jurisdiction`, `rights`. Rights to index not established → passport and link only, text not indexed. Two sources that disagree → reported as a conflict and sent to HR, no guess. Review date passed → the answer says so. In `live`, a document nobody real approved is refused | §5, §7, §8, T04, T05, T25, T26 |
 | Source registry | `knowledge/sources/registry.yaml`: the 28 sources and 8 books of §29–30 with their links, all "reference only" until a person records the rights. `python -m scripts.check_sources` | §29, §30 |
 | Candidates | HARI prepares an evidence card (4 criteria, 0–4, weights 40/30/15/15; no evidence = unknown, never 0; no total until every criterion has evidence) and says only "ready for a person" or "more evidence needed". Age, religion, nationality, family are removed before the AI sees the answers. The logic exercise is shown apart, marked unvalidated, and is not part of the card. The interview is scored by a person. A rejection is saved only with the basis that person writes | §11–14, T03, T06, T09, T10 |
-| Applicant data | The applicant is told an AI prepares the card and a person decides. They can ask for deletion; HR decides; a legal hold blocks deletion by button and by timer. The timer deletes only in `live` with an approved policy version and number of days | §10, T24 |
+| Applicant data | The applicant is told an AI prepares the card and a person decides. They can ask for deletion; HR decides; a legal hold blocks deletion by hand and by timer. The timer deletes only in `live` with an approved policy version and number of days | §10, T24 |
 | Integrations | `hari/integrations.py`: a source that fails makes its data "unknown" (never "absent") and opens one IT signal. No outside system is connected yet | §9, T15 |
 | Database | A column a model gained later is added to the existing table at start (must allow NULL) | — |
 
@@ -88,7 +112,7 @@ their Telegram ID. Then:
 .venv/Scripts/python -m scripts.add_staff --tg 123456789 --name "Фамилия Исм Отасининг исми" --role hr --department HR --position "HR масъули"
 ```
 
-Everyone else: HR presses **➕ Янги ходим**, hands the link to the person privately, and they open it themselves.
+Everyone else: HR writes **янги ходим** to HARI, hands the link to the person privately, and they open it themselves.
 
 ## Hosting on Render
 
@@ -116,7 +140,7 @@ your PC: suspend the Render service, then `python -m scripts.unset_webhook`.
 ## Tests
 
 ```bash
-.venv/Scripts/python -m pytest -q          # 175 tests + 1 skipped (T29 restore drill), no network
+.venv/Scripts/python -m pytest -q          # 266 tests + 1 skipped (T29 restore drill), no network
 .venv/Scripts/python -m pyflakes hari tests scripts
 ```
 
@@ -164,7 +188,8 @@ hari/
   integrations.py    health of outside sources (spec 2.0 §9)
   retention.py       deletion requests, legal hold, retention timer (spec 2.0 §10)
   apply/rubric.py    the candidate evidence card (spec 2.0 §14)
-  bot/               Telegram handlers, texts, keyboards
+  intent.py          typed message → action: phrases without AI, then the AI router
+  bot/               Telegram handlers and texts; handlers/chat.py runs typed actions
 scripts/add_staff.py first HR / owner account
 scripts/unset_webhook.py  move the bot token back to polling (local PC)
 render.yaml          Render Blueprint (database + web service)
@@ -182,4 +207,4 @@ tests/
 - **Before the pilot:** real approved SOPs; the 150 scenarios as an automated test set (§13, §28); PostgreSQL on a
   server in Uzbekistan and masking personal data before the AI (§19 — needs the lawyer's check of the AI provider);
   open forms kept in the database instead of memory (a restart now drops a half-filled form); Russian texts for
-  menus and forms (the safety replies have them); revoke and reissue the bot token (it was shared in a chat).
+  staff forms (the safety replies and the applicant flow have them); revoke and reissue the bot token (it was shared in a chat).

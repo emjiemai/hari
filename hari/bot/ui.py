@@ -1,136 +1,25 @@
-"""Keyboards, callback data and the helper that messages other people safely."""
+"""Sending messages. HARI shows no buttons: people write what they want (see hari.intent)."""
 
 from __future__ import annotations
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.filters.callback_data import CallbackData
-from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import ReplyKeyboardRemove
 from loguru import logger
 
-from hari.access import HR_ROLES
 from hari.bot import texts as T
 from hari.db.models import Employee
 
-
-class StepCb(CallbackData, prefix="st"):
-    action: str  # ack | done | ok | back
-    step_id: str
+# Sent once with a reply: takes the old menu keyboard off a phone that still shows it.
+NO_KEYBOARD = ReplyKeyboardRemove()
 
 
-class DocCb(CallbackData, prefix="doc"):
-    doc_id: str
-
-
-class CaseTypeCb(CallbackData, prefix="ct"):
-    slug: str
-
-
-class OfferCaseCb(CallbackData, prefix="oc"):
-    slug: str
-
-
-class AboutCb(CallbackData, prefix="ab"):
-    """Who a complaint is about, so it never goes to them: manager | hr | owner | other."""
-
-    target: str
-
-
-class CaseActCb(CallbackData, prefix="ca"):
-    action: str  # take | answer | close_yes | close_no
-    number: str
-
-
-class HelpfulCb(CallbackData, prefix="hf"):
-    log_id: str
-    ok: bool
-
-
-class ApplyCb(CallbackData, prefix="ap"):
-    action: str  # lang | consent | vac | skip | logic ("{index}-{choice}") | again
-    value: str
-
-
-class AppActCb(CallbackData, prefix="aa"):
-    action: str  # interview | reject | hire | show | score | iv0…iv4 | purge | hold
-    app_id: str
-
-
-class VacCb(CallbackData, prefix="vc"):
-    action: str  # open | new | close | reopen | edit | field
-    vac_id: str
-    field: str = ""
-
-
-class RoleCb(CallbackData, prefix="rl"):
-    action: str  # pick | person | set | ok | no
-    emp_id: str
-    role: str = ""
-
-
-class PersonCb(CallbackData, prefix="pe"):
-    """Buttons under an employee's profile card: pos | dept | role."""
-
-    action: str
-    emp_id: str
-
-
-class JoinCb(CallbackData, prefix="jn"):
-    """Under the report about someone without a card who opened the bot: add."""
-
-    action: str
-    tg: int
-    lang: str = "uz_cyrl"  # from their Telegram app, so the new card starts in a language they read
-
-
-class PickCb(CallbackData, prefix="pk"):
-    field: str  # role | manager | mentor | lang | confirm | mylang
-    value: str
-
-
-def main_menu(emp: Employee, handles_work: bool) -> ReplyKeyboardMarkup:
-    rows = [[T.BTN_PLAN, T.BTN_CASE], [T.BTN_MY_CASES, T.BTN_PROFILE]]
-    extra = []
-    if handles_work:
-        extra.append(T.BTN_QUEUE)
-    if emp.role in HR_ROLES:
-        extra += [T.BTN_NEW_EMP, T.BTN_STAFF]
-    if extra:
-        rows.append(extra[:2])
-        if len(extra) > 2:
-            rows.append(extra[2:])
-    rows.append([T.BTN_HELP])
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=T.say(emp, label)) for label in row] for row in rows],
-        resize_keyboard=True,
-    )
-
-
-def apply_button() -> InlineKeyboardMarkup:
-    """Under the "not linked" reply: lets a job seeker who came without the link start an application."""
-    return inline([[(T.BTN_APPLY, ApplyCb(action="again", value=""))]])
-
-
-def inline(rows: list[list[tuple[str, CallbackData]]]) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for row in rows:
-        builder.row(*[_button(text, cb) for text, cb in row])
-    return builder.as_markup()
-
-
-def _button(text: str, cb: CallbackData):  # noqa: ANN202
-    from aiogram.types import InlineKeyboardButton
-
-    return InlineKeyboardButton(text=text[:60], callback_data=cb.pack())
-
-
-async def notify(bot: Bot, person: Employee | None, text: str, markup: InlineKeyboardMarkup | None = None) -> bool:
+async def notify(bot: Bot, person: Employee | None, text: str) -> bool:
     """Message a staff member; never crash a flow because one person blocked the bot."""
     if person is None or not person.telegram_user_id:
         return False
     try:
-        await bot.send_message(person.telegram_user_id, T.say(person, text), reply_markup=markup)
+        await bot.send_message(person.telegram_user_id, T.say(person, text))
         return True
     except TelegramAPIError as exc:
         logger.warning("Message to {} not delivered: {}", person.code, type(exc).__name__)

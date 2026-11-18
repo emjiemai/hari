@@ -23,7 +23,7 @@ from loguru import logger
 from hari import scheduler
 from hari.apply.vacancies import seed_vacancies
 from hari.bot import commands, common
-from hari.bot.handlers import apply, employee, hiring, people, staff, start
+from hari.bot.handlers import apply, chat, employee, hiring, people, staff, start
 from hari.bot.middleware import DedupeMiddleware
 from hari.config import WEBHOOK_PATH, settings
 from hari.db.session import create_schema, ping, session_scope
@@ -50,9 +50,10 @@ def build_dispatcher() -> Dispatcher:
         dp.include_router(apply.router)  # first: applicants; its filters pass staff and strangers through
         dp.include_router(start.router)
         dp.include_router(staff.router)
-        dp.include_router(people.router)  # newcomer reports, /profil and the card buttons
+        dp.include_router(people.router)  # newcomer reports and the card forms
         dp.include_router(hiring.router)
-        dp.include_router(employee.router)  # last: its catch-all answers questions
+        dp.include_router(employee.router)
+        dp.include_router(chat.router)  # last: every typed message no form is waiting for
         _dispatcher = dp
     return _dispatcher
 
@@ -159,7 +160,7 @@ async def main() -> None:
         common.bot_username = me.username or ""
         logger.info("HARI is running as @{} ({} mode)", common.bot_username, mode)
         dp = build_dispatcher()
-        menu = asyncio.create_task(commands.install(bot))  # noqa: F841 — the Menu button list, in the background
+        menu = asyncio.create_task(commands.install(bot))  # noqa: F841 — removes the old Menu button list
         await (run_webhook(bot, dp) if mode == "webhook" else run_polling(bot, dp))
     finally:
         await bot.session.close()

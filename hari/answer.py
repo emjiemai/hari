@@ -22,7 +22,8 @@ guess (§8, T05); a stated wish to leave opens a minimal HR signal (§18, T11).
 Follow-ups: the model also gets this person's own earlier exchanges with HARI (hari.memory, masked like
 the question), so "yes, send it" or "I told you, my head hurts" are read against what was said. HARI cannot act by itself in chat: when the person needs something done (tell the
 manager they are ill, a certificate, leave), the model names a request type in "offer" and the server
-shows the button that opens it. The model never promises to send or prepare anything itself.
+asks the person to write «ҳа» to open it (HARI has no buttons). The model never promises to send or
+prepare anything itself.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ LANG_NAMES = {"uz_cyrl": "Uzbek in Cyrillic script", "uz_latn": "Uzbek in Latin 
 # Documents whose sections are worked examples (question → HARI's approved answer), not rules to quote.
 EXAMPLE_DOC_PREFIX = "HARI-QA-"
 CHAT_MAX_CHARS = 400
-# Request types the model may offer with a button. Sensitive ones (pay, legal, complaint, support,
+# Request types the model may offer (the person opens one by writing «ҳа»). Sensitive ones (pay, legal, complaint, support,
 # resignation) are routed by the fixed rules in hari.guard, never by the model.
 OFFERABLE_CASES = ("leave", "schedule", "timesheet", "certificate", "data_fix", "training", "question", "other")
 
@@ -97,13 +98,14 @@ something the person already said there. Do not repeat your previous answer word
 - You cannot do anything yourself in chat: you cannot notify a manager, prepare or send a document, \
 or register anything. Never say you will, and never ask "do you confirm?". When the person needs \
 something done by a person (report that they are ill or absent, ask for leave, a certificate, fix \
-their data, a schedule change), set "offer" to the request type and say they can open it with the \
-button below; the request goes to the responsible person. Types: "leave" (leave, sick day, absence), \
+their data, a schedule change), set "offer" to the request type and say a request goes to the \
+responsible person. The server adds one line telling them to reply «ҳа» to open it (there are no \
+buttons); do not write that line yourself. Types: "leave" (leave, sick day, absence), \
 "schedule" (schedule or remote work), "timesheet" (attendance error), "certificate" (a certificate or \
 document from HR), "data_fix" (wrong profile data), "training" (training or help), "question" (send \
 an unanswered question to HR), "other". Otherwise "offer" is null.
 - If the person already asked for that request in RECENT CONVERSATION, do not ask again: answer \
-briefly and set "offer" again so the button is shown.
+briefly and set "offer" again so it is offered again.
 - If the question is too unclear to answer, ask ONE clarifying question in "clarify". Do not ask one \
 when RECENT CONVERSATION makes it clear.
 - Shape: a short answer (2–5 sentences), then the next step. No links, no markdown.
@@ -123,7 +125,7 @@ class Answer:
     intent: str
     outcome: str  # answered | chat | clarify | no_source | conflict | rule | fallback | paused
     sources: list[Hit] = field(default_factory=list)
-    offer_case: str | None = None  # case type to offer with a button
+    offer_case: str | None = None  # case type to offer; the person's «ҳа» opens it
     model: str | None = None
     log_id: str | None = None
     auto_case: str | None = None  # case type the caller opens at once, in HARI's own minimal words
@@ -298,7 +300,7 @@ async def _answer(session: AsyncSession, emp: Employee, question: str, today: da
         return await without_model(reply.model)  # fails the output checks: never goes out (spec §30)
     if not used:
         if data.get("kind") == "chat" and len(text) <= CHAT_MAX_CHARS:
-            # greeting / about HARI / "use the button below": states no company rule
+            # greeting / about HARI / "a request can be opened": states no company rule
             return Answer(text, "chat", "chat", offer_case=offer, model=reply.model)
         return await without_model(reply.model)  # a rule-like answer that names no source is not sent (T26)
     return Answer(f"{text}\n\n{source_line(used)}", "knowledge", "answered", sources=used, offer_case=offer,

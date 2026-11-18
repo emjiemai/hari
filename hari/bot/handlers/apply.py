@@ -1,8 +1,11 @@
-"""Applicants: `t.me/<bot>?start=apply` (or apply_garmin, apply_primus, …) opens a job application.
+"""Applicants: `t.me/<bot>?start=apply` (or apply_garmin, apply_primus, …) opens a job application; so does
+writing «ариза» / «ишга кирмоқчиман» to HARI without a card.
 
-The application's progress is the `step` saved in the database, never FSM memory, so a redeploy in the
-middle loses nothing. This router runs first; its filters only match people who are not staff, so
-employees, invite links and strangers without an application pass through untouched.
+There are no buttons: each choice is listed with numbers and the applicant writes the number (or the
+words of the option); yes/no questions take «ҳа» / «йўқ». The application's progress is the `step` saved
+in the database, never FSM memory, so a redeploy in the middle loses nothing. This router runs first; its
+filters only match people who are not staff, so employees, invite links and strangers without an
+application pass through untouched.
 """
 
 from __future__ import annotations
@@ -14,29 +17,36 @@ from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction
 from aiogram.filters import BaseFilter, Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import Message
 from loguru import logger
 
+from hari import intent as I
+from hari import retention
 from hari.apply import applications as A
 from hari.apply import evaluate as E
 from hari.apply.logic_bank import by_id, option_labels, question_text
-from hari import retention
 from hari.apply.report import evaluate_and_report, recipients
-from hari.apply.texts import LANG_BUTTONS, t
+from hari.apply.texts import LANG_CHOICES, t
 from hari.apply.vacancies import list_open, title_for
-from hari.bot.common import handles_work, staff_by_tg
-from hari.bot.ui import ApplyCb, inline, main_menu, notify
+from hari.bot.common import staff_by_tg
+from hari.bot.ui import NO_KEYBOARD, notify
 from hari.config import settings
 from hari.db.models import Application, Vacancy
 from hari.db.session import session_scope
+from hari.translit import cyrillic_to_latin, normalize
 from hari.worktime import local, now_utc
 
 router = Router(name="apply")
 
 APPLY_ARGS = re.compile(r"^apply(_[A-Za-z0-9_-]{0,40})?$")
 TEXT_STEPS = {"name", "phone", "experience", "job"}
+YES = ("ҳа", "ха", "розиман", "рози", "да", "согласен", "согласна", "ок", "майли", "хоп", "xa", "ha")
+NO = ("йўқ", "йук", "нет", "не", "розимасман", "не согласен", "не согласна")
+SKIP = ("йўқ", "йук", "нет", "ўтказиб", "ўтказ", "пропустить", "пропуск", "резюмем йўқ", "резюме йўқ", "нет резюме")
+AGAIN = ("янги ариза", "бошқа вакансия", "яна ариза", "новая заявка", "другая вакансия", "ещё заявка")
+DELETE = ("ўчир", "ўчиринг", "удал")
 
-Reply = tuple[str, object | None]  # text, markup
+Reply = tuple[str, object | None]  # text, reply markup
 
 
 class Applicant(BaseFilter):
@@ -45,7 +55,7 @@ class Applicant(BaseFilter):
     def __init__(self, submitted_too: bool = False) -> None:
         self.submitted_too = submitted_too
 
-    async def __call__(self, event: Message | CallbackQuery) -> bool | dict:
+    async def __call__(self, event: Message) -> bool | dict:
         tg = event.from_user.id
         async with session_scope() as session:
             if await staff_by_tg(session, tg) is not None:
@@ -56,51 +66,79 @@ class Applicant(BaseFilter):
         return {"app_id": app.id} if app is not None else False
 
 
+def _words(text: str) -> str:
+    return " ".join(normalize((text or "").lower()).split())
+
+
+def _says(text: str, options: tuple[str, ...]) -> bool:
+    words = _words(text)
+    return any(re.search(rf"(?<!\w){re.escape(_words(o))}", words) for o in options if _words(o))
+
+
+LETTERS = "АБВГ"  # options are lettered: many answers are numbers themselves ("3", "12")
+
+
+def logic_choice(text: str, labels: tuple[str, ...]) -> int | None:
+    """The option by its letter (А/Б/В/Г, or A/B/V/G) or by its whole text."""
+    words = _words(text)
+    if len(words) == 1 and words in LETTERS.lower():
+        return LETTERS.lower().index(words)
+    exact = [i for i, label in enumerate(labels) if _words(label) == words]
+    return exact[0] if len(exact) == 1 else None
+
+
+def _numbered(items: list[str]) -> str:
+    return "\n".join(f"{i}. {label}" for i, label in enumerate(items, start=1))
+
+
 # --------------------------------------------------------------------------- what to say at each step
 
 async def prompt(session, app: Application) -> list[Reply]:  # noqa: ANN001
     lang = app.language
     if app.step == "lang":
-        return [(t(lang, "choose_lang"), inline([[(label, ApplyCb(action="lang", value=code))]
-                                                  for code, label in LANG_BUTTONS.items()]))]
+        return [(t(lang, "choose_lang"), NO_KEYBOARD)]
     if app.step == "consent":
-        return [(t(lang, "consent"), inline([[(t(lang, "consent_btn"), ApplyCb(action="consent", value="yes")),
-                                              (t(lang, "decline_btn"), ApplyCb(action="consent", value="no"))]]))]
+        return [(t(lang, "consent"), None)]
     if app.step == "name":
         return [(t(lang, "ask_name"), None)]
     if app.step == "phone":
-        keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t(lang, "phone_btn"), request_contact=True)]],
-                                       resize_keyboard=True, one_time_keyboard=True)
-        return [(t(lang, "ask_phone"), keyboard)]
+        return [(t(lang, "ask_phone"), None)]
     if app.step == "vacancy":
-        return [(t(lang, "ask_vacancy"), await vacancy_buttons(session, lang))]
+        options = await vacancy_options(session, lang)
+        if app.telegram_user_id:
+            _shown[app.telegram_user_id] = options
+        titles = [title for _, title in options]
+        return [(t(lang, "ask_vacancy") + "\n" + _numbered(titles), None)]
     if app.step == "experience":
         return [(t(lang, "ask_experience"), None)]
     if app.step == "resume":
-        return [(t(lang, "ask_resume"), inline([[(t(lang, "skip_btn"), ApplyCb(action="skip", value="resume"))]]))]
+        return [(t(lang, "ask_resume"), None)]
     if app.step == "logic":
         index = A.current_logic(app)
         q = by_id(app.logic[index]["qid"])
-        rows = [[(label, ApplyCb(action="logic", value=f"{index}-{i}"))]
-                for i, label in enumerate(option_labels(q, lang))]
-        return [(t(lang, "logic_q", n=index + 1, text=question_text(q, lang)), inline(rows))]
+        options = "\n".join(f"{LETTERS[i]}) {label}" for i, label in enumerate(option_labels(q, lang)))
+        return [(t(lang, "logic_q", n=index + 1, text=question_text(q, lang),
+                   options=cyrillic_to_latin(options) if lang == "uz_latn" else options), None)]
     if app.step == "job":
         index = A.current_job(app)
         return [(t(lang, "job_q", n=index + 4, text=app.job[index]["q"]), None)]
     return [status_reply(app)]
 
 
-async def vacancy_buttons(session, lang: str):  # noqa: ANN001, ANN201
-    rows = [[(title_for(v, lang), ApplyCb(action="vac", value=v.id))] for v in await list_open(session)]
-    rows.append([(title_for(None, lang), ApplyCb(action="vac", value="general"))])
-    return inline(rows)
+# The vacancy list each applicant last saw, so "2" means the second line THEY saw even if a vacancy closed
+# since. Process memory only: after a restart the current list is used (a closed one is refused anyway).
+_shown: dict[int, list[tuple[str, str]]] = {}
+
+
+async def vacancy_options(session, lang: str) -> list[tuple[str, str]]:  # noqa: ANN001
+    """(vacancy id or "general", title) in the order they are listed."""
+    rows = [(v.id, title_for(v, lang)) for v in await list_open(session)]
+    return rows + [("general", title_for(None, lang))]
 
 
 def status_reply(app: Application) -> Reply:
     when = local(app.submitted_at).strftime("%d.%m.%Y") if app.submitted_at else ""
-    return (t(app.language, f"status_{app.status}", date=when),
-            inline([[(t(app.language, "apply_again_btn"), ApplyCb(action="again", value=""))],
-                    [(t(app.language, "delete_btn"), ApplyCb(action="delete", value=""))]]))
+    return (t(app.language, f"status_{app.status}", date=when) + "\n\n" + t(app.language, "status_hint"), None)
 
 
 async def send(target: Message, replies: list[Reply]) -> None:
@@ -146,8 +184,7 @@ async def apply_link(message: Message, command: CommandObject, state: FSMContext
     async with session_scope() as session:
         emp = await staff_by_tg(session, tg)
         if emp is not None:
-            menu = main_menu(emp, await handles_work(session, emp))
-            await message.answer(t(emp.language, "already_staff"), reply_markup=menu)
+            await message.answer(t(emp.language, "already_staff"), reply_markup=NO_KEYBOARD)
             return
         if await A.draft_for(session, tg) is None:
             done = await A.last_submitted(session, tg)
@@ -161,19 +198,18 @@ async def apply_link(message: Message, command: CommandObject, state: FSMContext
     await show_step(message, bot, app_id)
 
 
-@router.callback_query(ApplyCb.filter(F.action == "again"))
-async def apply_again(query: CallbackQuery, bot: Bot) -> None:
-    await query.answer()
-    tg = query.from_user.id
+async def start_application(message: Message, bot: Bot) -> None:
+    """Someone without a card wrote that they want a job (or «янги ариза» after an earlier one)."""
+    tg = message.from_user.id
     async with session_scope() as session:
         emp = await staff_by_tg(session, tg)
         if emp is None:
             app, _ = await A.start_or_resume(session, tg, "apply")
             app_id = app.id
     if emp is not None:
-        await query.message.answer(t(emp.language, "already_staff"))
+        await message.answer(t(emp.language, "already_staff"))
         return
-    await show_step(query.message, bot, app_id)
+    await show_step(message, bot, app_id)
 
 
 @router.message(CommandStart(magic=F.args.is_(None)), Applicant(submitted_too=True))
@@ -187,23 +223,13 @@ async def cancel(message: Message, app_id: str) -> None:
     async with session_scope() as session:
         app = await session.get(Application, app_id)
         lang = app.language
-    await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
+    await message.answer(t(lang, "cancelled"), reply_markup=NO_KEYBOARD)
 
 
-# --------------------------------------------------------------------------- buttons
-
-async def _draft(session, query: CallbackQuery) -> Application | None:  # noqa: ANN001
-    if await staff_by_tg(session, query.from_user.id) is not None:
-        return None
-    return await A.draft_for(session, query.from_user.id)
-
-
-@router.callback_query(ApplyCb.filter(F.action == "delete"))
-async def ask_deletion(query: CallbackQuery, bot: Bot) -> None:
+async def ask_deletion(message: Message, bot: Bot) -> None:
     """The applicant asks for their data to be deleted. A person at HR decides; a legal hold stops it
     (spec 2.0 §10, T24)."""
-    await query.answer()
-    tg = query.from_user.id
+    tg = message.from_user.id
     async with session_scope() as session:
         if await staff_by_tg(session, tg) is not None:
             return
@@ -213,84 +239,106 @@ async def ask_deletion(query: CallbackQuery, bot: Bot) -> None:
         lang = app.language
         if app.status == "draft":  # nothing was submitted: the draft simply goes
             await session.delete(app)
-            await query.message.answer(t(lang, "no_consent"))
+            await message.answer(t(lang, "no_consent"))
             return
         fresh = await retention.request_deletion(session, app)
-        held, number, app_id = bool(app.legal_hold), app.number, app.id
+        held, number = bool(app.legal_hold), app.number
         people = await recipients(session) if fresh else []
-    await query.message.answer(t(lang, "delete_hold" if held else "delete_requested" if fresh else "delete_waiting"))
-    from hari.bot.handlers.hiring import deletion_buttons  # here: hiring imports the staff handlers
+    await message.answer(t(lang, "delete_hold" if held else "delete_requested" if fresh else "delete_waiting"))
+    from hari.bot.handlers.hiring import deletion_hint  # here: hiring imports the staff handlers
 
     for person in people:
         await notify(bot, person, f"{number}: номзод шахсий маълумотини ўчиришни сўради."
                      + (" Legal hold ўрнатилган — юрист кўриб чиқиши керак." if held else
-                        " Қонуний сақлаш асоси бўлмаса ўчиринг; бўлса, legal hold ўрнатинг."),
-                     None if held else deletion_buttons(app_id))
+                        " " + deletion_hint(number)))
 
 
-@router.callback_query(ApplyCb.filter(~F.action.in_({"again", "delete"})))
-async def on_button(query: CallbackQuery, callback_data: ApplyCb, bot: Bot) -> None:
-    action, value = callback_data.action, callback_data.value
-    before: list[Reply] = []
-    async with session_scope() as session:
-        app = await _draft(session, query)
-        if app is None:
-            await query.answer()
-            return
-        lang, now = app.language, now_utc()
-        if action == "lang" and app.step == "lang" and value in LANG_BUTTONS:
-            app.language = value
-            A.go(app, "consent", now)
-        elif action == "consent" and app.step == "consent":
-            if value != "yes":
-                await session.delete(app)
-                await query.answer()
-                await query.message.answer(t(lang, "no_consent"))
-                return
+# --------------------------------------------------------------------------- answers, typed or sent
+
+async def _choice_step(session, app: Application, text: str, now) -> tuple[bool, list[Reply]]:  # noqa: ANN001
+    """The steps that used to be buttons. (understood, replies to send before the next step)."""
+    lang = app.language
+    if app.step == "lang":
+        picked = I.choice(text, list(LANG_CHOICES.items()))
+        if picked is None:
+            return False, [(t(lang, "pick_number"), None)]
+        app.language = picked
+        A.go(app, "consent", now)
+        return True, []
+    if app.step == "consent":
+        if _says(text, NO) and not _says(text, ("розиман", "согласен", "согласна")):
+            await session.delete(app)
+            return True, [(t(lang, "no_consent"), None)]
+        if _says(text, YES):
             app.consent_at = now
             A.go(app, "name", now)
-        elif action == "vac" and app.step == "vacancy":
-            try:
-                await A.choose_vacancy(session, app, None if value == "general" else value)
-                A.go(app, "experience", now)
-            except A.ApplyError as exc:
-                before = [(t(lang, str(exc)), None)]
-        elif action == "skip" and app.step == "resume":
+            return True, []
+        return False, [(t(lang, "yes_or_no"), None)]
+    if app.step == "vacancy":
+        options = _shown.get(app.telegram_user_id) or await vacancy_options(session, lang)
+        picked = I.choice(text, [(vid, (title,)) for vid, title in options])
+        if picked is None:
+            return False, [(t(lang, "pick_number"), None)]
+        try:
+            await A.choose_vacancy(session, app, None if picked == "general" else picked)
+            A.go(app, "experience", now)
+            return True, []
+        except A.ApplyError as exc:  # it closed or was already applied for: say so, then the list again
+            return True, [(t(lang, str(exc)), None)]
+    if app.step == "resume":
+        if _says(text, SKIP):
             A.go(app, "logic", now)
-        elif action == "logic" and app.step == "logic":
-            index, _, choice = value.partition("-")
-            if not (index.isdigit() and choice.isdigit()) or not A.answer_logic(app, int(index), int(choice), now):
-                await query.answer()
-                return
-            if A.current_logic(app) is None:
-                A.go(app, "job", now)
-        else:
-            await query.answer()  # an old button from an earlier step
-            return
-        app_id = app.id
-    await query.answer()
-    try:
-        await query.message.edit_reply_markup(reply_markup=None)
-    except Exception:  # noqa: BLE001 — the message may be too old to edit; nothing depends on it
-        pass
-    if before:  # the vacancy closed or was already applied for: say so, then the list again
-        await send(query.message, before)
-    await show_step(query.message, bot, app_id)
+            return True, []
+        return False, [(t(lang, "resume_please"), None)]
+    if app.step == "logic":
+        index = A.current_logic(app)
+        q = by_id(app.logic[index]["qid"])
+        picked = logic_choice(text, option_labels(q, lang))
+        if picked is None or not A.answer_logic(app, index, picked, now):
+            return False, [(t(lang, "pick_letter"), None)]
+        if A.current_logic(app) is None:
+            A.go(app, "job", now)
+        return True, []
+    return False, []
 
-
-# --------------------------------------------------------------------------- typed answers, files
 
 @router.message(~F.text.startswith("/"), Applicant(submitted_too=True))  # commands pass through
 async def on_message(message: Message, bot: Bot, app_id: str) -> None:
+    text = (message.text or "").strip()
     async with session_scope() as session:
         app = await session.get(Application, app_id)
         if app.status != "draft":
-            await send(message, [status_reply(app)])
-            return
+            if text and _says(text, AGAIN):
+                again = True
+            elif text and _says(text, DELETE):
+                again = None
+            else:
+                await send(message, [status_reply(app)])
+                return
+        else:
+            again = False
+    if again:
+        await start_application(message, bot)
+        return
+    if again is None:
+        await ask_deletion(message, bot)
+        return
+    async with session_scope() as session:
+        app = await session.get(Application, app_id)
         lang, step, now = app.language, app.step, now_utc()
-        text = (message.text or "").strip() if message.text and not message.text.startswith("/") else ""
         before: list[Reply] = []
-        if step == "phone" and message.contact is not None:
+        if step in ("lang", "consent", "vacancy", "logic") or (step == "resume" and text):
+            if not text:
+                await message.answer(t(lang, "type_please"))
+                return
+            understood, before = await _choice_step(session, app, text, now)
+            if not understood:
+                await send(message, before)
+                return
+            if step == "consent" and app.consent_at is None:  # declined: the draft is gone
+                await send(message, before)
+                return
+        elif step == "phone" and message.contact is not None:
             if message.contact.user_id != message.from_user.id:
                 await message.answer(t(lang, "not_own_contact"))
                 return
@@ -307,9 +355,6 @@ async def on_message(message: Message, bot: Bot, app_id: str) -> None:
             return
         elif step in TEXT_STEPS and not text:
             await message.answer(t(lang, "type_please"))
-            return
-        elif step not in TEXT_STEPS:
-            await message.answer(t(lang, "press_button"))
             return
         elif step == "name":
             name = A.clean_name(text)
@@ -332,14 +377,15 @@ async def on_message(message: Message, bot: Bot, app_id: str) -> None:
             A.go(app, "phone", now)
         elif step == "phone":
             A.go(app, "vacancy", now)
-            before = [(f"{t(lang, 'phone_btn')}: {app.phone}", ReplyKeyboardRemove())]
+            before = [(t(lang, "phone_saved", phone=app.phone), None)]
         elif step == "experience":
             A.go(app, "resume", now)
-        elif step == "resume":
+        elif step == "resume" and app.step == "resume":
             A.go(app, "logic", now)
         elif step == "job" and A.current_job(app) is None:
             await A.submit(session, app, now)
         finished = app.status == "submitted"
+        lang = app.language
     if finished:
         await message.answer(t(lang, "thanks", days=settings.apply_reply_days))
         await evaluate_and_report(bot, app_id)

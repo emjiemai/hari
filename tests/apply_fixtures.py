@@ -14,7 +14,7 @@ from hari.apply.vacancies import seed_vacancies
 from hari.bot import common
 from hari.llm import LLMClient
 from tests.test_apply_evaluate import FakeLLM
-from tests.test_bot_flow import Harness, btn
+from tests.test_bot_flow import Harness
 
 APPLICANT, OWNER, HR, WORKER = 601, 602, 603, 604
 _ids = itertools.count(10_000)
@@ -63,27 +63,47 @@ def use_ai(monkeypatch, *replies: dict) -> FakeLLM:
 
 
 async def apply_to_the_end(h: ApplyHarness, tg: int = APPLICANT, *, link: str = "/start apply_garmin",
-                           lang: str = "Ўзбекча", consent: str = "Розиман", name: str = "Алиев Вали",
-                           vacancy: str = "B2B", skip: str = "Ўтказиб") -> list[str]:
-    """The whole application; returns the replies to the last answer."""
+                           lang: str = "1", consent: str = "ҳа", name: str = "Алиев Вали",
+                           vacancy: str = "B2B", skip: str = "йўқ") -> list[str]:
+    """The whole application, every answer typed; returns the replies to the last answer."""
     await h.say(tg, link)
-    await h.press(tg, btn(h, tg, lang))
-    await h.press(tg, btn(h, tg, consent))
+    await h.say(tg, lang)
+    await h.say(tg, consent)
     await h.say(tg, name)
     await h.say(tg, "90 123 45 67")
-    await h.press(tg, btn(h, tg, vacancy))
+    await h.say(tg, vacancy_number(h, tg, vacancy))
     await h.say(tg, "3 йил савдода ишлаганман")
-    await h.press(tg, btn(h, tg, skip))
+    await h.say(tg, skip)
     for _ in range(3):
-        await h.press(tg, h.buttons(tg)[0][1])
+        await h.say(tg, "А")
     await h.say(tg, "Биринчи жавоб")
     return await h.say(tg, "Иккинчи жавоб")
 
 
-async def reject(h: ApplyHarness, tg: int, basis: str = "Иш намунаси мезони бўйича далил етарли эмас") -> list[str]:
-    """A rejection is the button and then the written basis (spec 2.0 §14)."""
-    await h.press(tg, btn(h, tg, "Рад этиш"))
-    return await h.say(tg, basis)
+def vacancy_number(h: ApplyHarness, tg: int, starts: str) -> str:
+    """The number of the listed vacancy whose title starts with `starts`, from the last list HARI sent."""
+    for text in reversed(h.to(tg)):
+        for line in text.splitlines():
+            number, _, title = line.partition(". ")
+            if number.isdigit() and title.startswith(starts):
+                return number
+    raise AssertionError(f"no vacancy {starts!r} listed")
+
+
+async def reject(h: ApplyHarness, tg: int, basis: str = "Иш намунаси мезони бўйича далил етарли эмас",
+                 number: str | None = None) -> list[str]:
+    """A rejection is written with its basis (spec 2.0 §14), then confirmed."""
+    if number is None:
+        from sqlalchemy import select
+
+        from hari.db.models import Application
+        from hari.db.session import session_scope
+
+        async with session_scope() as s:
+            number = (await s.execute(select(Application.number).where(Application.number.is_not(None))
+                                      .order_by(Application.created_at.desc()).limit(1))).scalar_one()
+    await h.say(tg, f"{number} рад эт: {basis}")
+    return await h.say(tg, "ҳа")
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Interview / Reject on the report, messages to the applicant, and a lost report sent again by the timer."""
+"""Interview / Reject written about a report, messages to the applicant, and a lost report sent again by the timer."""
 
 from __future__ import annotations
 
@@ -11,23 +11,31 @@ from hari.apply.applications import start_or_resume, submit
 from hari.db.models import Application
 from tests.apply_fixtures import APPLICANT, HR, OWNER, WORKER, h_apply, h_apply_done, reject  # noqa: F401
 from tests.conftest import FakeBot, at_tashkent
-from tests.test_bot_flow import btn
 
 NOW = at_tashkent(date(2026, 11, 9), 10)  # a Monday morning: no Friday report or evening digest in this test
 
 
+async def app_number(session_scope) -> str:
+    async with session_scope() as s:
+        return (await s.execute(select(Application))).scalar_one().number
+
+
 async def test_interview_then_reject_tells_applicant(h_apply_done, session_scope):
     h = h_apply_done
-    interview, reject_btn = btn(h, OWNER, "Суҳбатга"), btn(h, HR, "Рад этиш")
-    await h.press(OWNER, interview)
+    number = await app_number(session_scope)
+    assert number in h.to(OWNER)[-1] and f"«{number} ни суҳбатга чақир»" in h.to(OWNER)[-1]  # the report says how
+    await h.say(OWNER, f"{number} ни суҳбатга чақир")
+    assert "учрашмоқчимиз" not in h.to(APPLICANT)[-1]  # nothing before «ҳа»
+    await h.say(OWNER, "ҳа")
     assert "+998901234567" in h.to(APPLICANT)[-1] and "учрашмоқчимиз" in h.to(APPLICANT)[-1]
-    asked = await h.press(HR, reject_btn)  # an interview isn't final
+    asked = await h.say(HR, f"{number} ни рад эт")  # an interview isn't final
     assert "рад этиш асосини ёзинг" in asked[0]
     assert "бошқа номзодни танладик" not in h.to(APPLICANT)[-1]  # nothing is decided until the basis is written
     await h.say(HR, "Суҳбатда мижоз билан ишлаш мисоли бўлмади")
     assert "бошқа номзодни танладик" in h.to(APPLICANT)[-1]
     seen = len(h.to(APPLICANT))
-    await h.press(OWNER, interview)  # too late
+    await h.say(OWNER, f"{number} ни суҳбатга чақир")  # too late
+    await h.say(OWNER, "ҳа")
     assert len(h.to(APPLICANT)) == seen
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
@@ -35,31 +43,40 @@ async def test_interview_then_reject_tells_applicant(h_apply_done, session_scope
     assert "суҳбатга таклиф" not in (await h.say(APPLICANT, "салом"))[0]
 
 
-async def test_too_late_is_explained_to_the_presser(h_apply_done):
+async def test_too_late_is_explained(h_apply_done, session_scope):
     h = h_apply_done
-    await reject(h, HR)
-    calls = h.session.alerts
-    await h.press(OWNER, btn(h, OWNER, "Суҳбатга"))
-    assert any("Кадрова Зайнаб" in a and "Рад этилган" in a for a in calls)
+    number = await app_number(session_scope)
+    await reject(h, HR, number=number)
+    await h.say(OWNER, f"{number} ни суҳбатга чақир")
+    replies = await h.say(OWNER, "ҳа")
+    assert "Кадрова Зайнаб" in replies[0] and "Рад этилган" in replies[0]
 
 
 async def test_only_staff_who_hire_can_decide(h_apply_done, session_scope):
     h = h_apply_done
-    await h.press(WORKER, btn(h, OWNER, "Рад этиш"))
-    await h.press(APPLICANT, btn(h, OWNER, "Рад этиш"))
+    number = await app_number(session_scope)
+    assert (await h.say(WORKER, f"{number} рад эт: асос"))[0] == "Бу амал учун ҳуқуқингиз йўқ."
+    await h.say(APPLICANT, f"{number} рад эт: асос")
+    await h.say(APPLICANT, "ҳа")
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
     assert app.status == "submitted"
-    assert any("ҳуқуқингиз йўқ" in a for a in h.session.alerts)
 
 
 async def test_show_sends_the_report_again(h_apply_done, session_scope):
     h = h_apply_done
-    async with session_scope() as s:
-        app = (await s.execute(select(Application))).scalar_one()
-    from hari.bot.ui import AppActCb
-    replies = await h.press(HR, AppActCb(action="show", app_id=app.id).pack())
-    assert replies[0].startswith(f"Янги ариза {app.number}")
+    number = await app_number(session_scope)
+    replies = await h.say(HR, number)
+    assert replies[0].startswith(f"Янги ариза {number}")
+    assert number in (await h.say(HR, "аризалар"))[0]
+
+
+async def test_applications_waiting_are_listed_by_word_or_command(h_apply_done):
+    h = h_apply_done
+    replies = await h.say(OWNER, "аризалар")
+    assert "Алиев Вали" in replies[0]
+    replies = await h.say(OWNER, "/arizalar")
+    assert "Алиев Вали" in replies[0]
 
 
 async def test_lost_report_is_resent_by_the_timer(session_scope, staff):

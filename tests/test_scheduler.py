@@ -39,7 +39,7 @@ async def test_one_nudge_per_day_even_with_many_ticks(newcomer):
         await scheduler.tick(bot, at_tashkent(MONDAY, 9, minute))
     assert len(bot.sent) == 1
     chat_id, text = bot.sent[0]
-    assert chat_id == 14 and "Ботир" in text and "Режам" in text
+    assert chat_id == 14 and "Ботир" in text and "«режам»" in text
     await scheduler.tick(bot, at_tashkent(date(2026, 11, 10), 9, 5))
     assert len(bot.sent) == 2  # next work day: a new one
 

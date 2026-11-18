@@ -97,7 +97,7 @@ def nudge_text(emp: Employee, steps: list) -> str:  # noqa: ANN001
     lines = [f"Хайрли тонг, {emp.full_name.split()[1] if len(emp.full_name.split()) > 1 else emp.full_name}. "
              "Мослашув режангиздаги очиқ қадамлар:"]
     lines += [f"• {s.title}" for s in steps[:5]]
-    lines.append("\n«Режам» тугмасини босинг. Қайси қадам тушунарсиз бўлса, ёзинг.")
+    lines.append("\nБатафсил: «режам» деб ёзинг. Қайси қадам тушунарсиз бўлса, сўранг.")
     return "\n".join(lines)
 
 

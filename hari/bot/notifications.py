@@ -1,4 +1,5 @@
-"""Messages HARI sends to the people who must act: case handlers and step acceptors."""
+"""Messages HARI sends to the people who must act: case handlers and step acceptors. Each ends with what
+to write back (there are no buttons)."""
 
 from __future__ import annotations
 
@@ -6,7 +7,7 @@ from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hari.bot import texts as T
-from hari.bot.ui import CaseActCb, StepCb, inline, notify, send_proof
+from hari.bot.ui import notify, send_proof
 from hari.db.models import Employee, HRCase, OnboardingStep
 from hari.worktime import fmt
 
@@ -23,9 +24,9 @@ def case_card(case: HRCase, requester: Employee, about: Employee | None) -> str:
     return "\n".join(lines)
 
 
-def case_buttons(case: HRCase):  # noqa: ANN201
-    return inline([[("Қабул қилдим", CaseActCb(action="take", number=case.number)),
-                    ("Жавоб / қарор", CaseActCb(action="answer", number=case.number))]])
+def case_hint(case: HRCase) -> str:
+    return (f"Кўриб чиқаётган бўлсангиз: «{case.number} ни олдим». "
+            f"Жавоб ёки қарор: «{case.number} га жавоб: …» — ходимга шу матн боради.")
 
 
 async def tell_case_handler(bot: Bot, session: AsyncSession, case: HRCase) -> bool:
@@ -34,19 +35,16 @@ async def tell_case_handler(bot: Bot, session: AsyncSession, case: HRCase) -> bo
     assignee = await session.get(Employee, case.assignee_id)
     requester = await session.get(Employee, case.requester_id)
     about = await session.get(Employee, case.about_employee_id) if case.about_employee_id else None
-    return await notify(bot, assignee, case_card(case, requester, about), case_buttons(case))
+    return await notify(bot, assignee, f"{case_card(case, requester, about)}\n\n{case_hint(case)}")
 
 
 async def tell_step_acceptor(bot: Bot, acceptor: Employee, owner: Employee, step: OnboardingStep) -> bool:
     text = (
         f"Мослашув: {owner.full_name} ({owner.position}) «{step.title}» қадамини бажардим деб юборди.\n\n"
         f"Натижа: {step.proof_text or '(файл илова қилинган)'}\n\n"
-        "Қабул қиласизми? Қайтарсангиз, сабабини ёзасиз."
+        "Қабул қилсангиз, «қабул» деб ёзинг. Қайтарсангиз — «қайтар: нимани тузатиш керак»."
     )
-    ok = await notify(bot, acceptor, text, inline([[
-        ("Қабул қилиш", StepCb(action="ok", step_id=step.id)),
-        ("Қайтариш", StepCb(action="back", step_id=step.id)),
-    ]]))
+    ok = await notify(bot, acceptor, text)
     if ok:
         await send_proof(bot, acceptor, step.proof_file_id)
     return ok

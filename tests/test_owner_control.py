@@ -1,18 +1,15 @@
-"""The owner hears about every newcomer and runs each card from the bot: the report when someone joins,
+"""The owner hears about every newcomer and runs each card by writing: the report when someone joins,
 adding someone who opened HARI without a card, and changing position, department and role."""
 
 from __future__ import annotations
 
-import re
-
 import pytest
 from sqlalchemy import select
 
-from hari.bot.ui import JoinCb, PickCb, RoleCb
 from hari.db import session as db
 from hari.db.models import Employee
 from hari.employees import by_telegram, make_invite
-from tests.test_bot_flow import HR, MENTOR, STRANGER, Harness, btn  # noqa: F401
+from tests.test_bot_flow import HR, MENTOR, STRANGER, Harness, no_buttons  # noqa: F401
 
 OWNER = 600
 
@@ -36,32 +33,35 @@ async def test_owner_gets_the_full_card_when_someone_joins_and_sets_the_position
     await h.say(777, f"/start {token}")
     report = h.to(OWNER)[-1]
     for part in ("Янги ходим HARI'га қўшилди", "Янгиев Ботир", f"ID: {emp.code}", "Telegram ID: 777",
-                 "Лавозим: Сотувчи", "Бўлим: Garmin сотув", "Роль: Ходим"):
+                 "Лавозим: Сотувчи", "Бўлим: Garmin сотув", "Роль: Ходим",
+                 f"«{emp.code} лавозими: …»", f"«{emp.code} ролини hr қил»"):
         assert part in report, part
-    assert [t for t, _ in h.buttons(OWNER)] == ["Лавозимни белгилаш", "Бўлимни ўзгартириш", "Ролни ўзгартириш"]
     assert not any("қўшилди" in t for t in h.to(HR))  # the report goes to owners
 
-    await h.press(OWNER, btn(h, OWNER, "Лавозимни белгилаш"))
-    replies = await h.say(OWNER, "Катта сотувчи")
+    replies = await h.say(OWNER, f"{emp.code} лавозими: Катта сотувчи")
+    assert "Тасдиқлайсизми?" in replies[0] and "«Сотувчи» → «Катта сотувчи»" in replies[0]
+    replies = await h.say(OWNER, "ҳа")
     assert "«Сотувчи» → «Катта сотувчи»" in replies[0] and "Лавозим: Катта сотувчи" in replies[0]
     assert "лавозим — Катта сотувчи" in h.to(777)[-1]  # the person is told
     async with session_scope() as s:
         assert (await by_telegram(s, 777)).position == "Катта сотувчи"
+    no_buttons(h)
 
 
 async def test_someone_without_a_card_is_reported_once_and_the_owner_adds_them(h, session_scope):
     await h.say(STRANGER, "/start")
     report = h.to(OWNER)[-1]
     assert "профили йўқ одам" in report and f"Telegram ID: {STRANGER}" in report and "u504" in report
+    assert f"«{STRANGER} ни ходим қилиб қўш»" in report
     await h.say(STRANGER, "/start")
     assert sum("профили йўқ" in t for t in h.to(OWNER)) == 1  # once per account, not on every /start
 
-    await h.press(OWNER, btn(h, OWNER, "Ходим қилиб қўшиш"))
+    await h.say(OWNER, f"{STRANGER} ни ходим қилиб қўш")
     await h.say(OWNER, "Омборчи")  # 1/4 position
     await h.say(OWNER, "Омборов Жасур")  # 2/4 name
     await h.say(OWNER, "Омбор")  # 3/4 department, typed
-    await h.press(OWNER, btn(h, OWNER, "Ходим"))  # 4/4 role
-    replies = await h.press(OWNER, btn(h, OWNER, "Сақлаш"))
+    await h.say(OWNER, "Ходим")  # 4/4 role
+    replies = await h.say(OWNER, "ҳа")
     assert "Ходим қўшилди" in replies[0] and "Лавозим: Омборчи" in replies[0]
     assert "Хуш келибсиз, Омборов Жасур" in h.to(STRANGER)[-1]
     async with session_scope() as s:
@@ -74,65 +74,67 @@ async def test_someone_without_a_card_is_reported_once_and_the_owner_adds_them(h
 
 async def test_a_department_can_be_picked_from_the_existing_ones(h, session_scope):
     await h.say(STRANGER, "/start")
-    await h.press(OWNER, btn(h, OWNER, "Ходим қилиб қўшиш"))
+    await h.say(OWNER, f"{STRANGER} ни ходим қилиб қўш")
     await h.say(OWNER, "Сотувчи")
-    await h.say(OWNER, "Сотувов Али")
-    await h.press(OWNER, btn(h, OWNER, "Garmin сотув"))
-    await h.press(OWNER, btn(h, OWNER, "Ходим"))
-    await h.press(OWNER, btn(h, OWNER, "Сақлаш"))
+    replies = await h.say(OWNER, "Сотувов Али")
+    garmin = next(line.split(".")[0] for line in replies[0].splitlines() if line.endswith("Garmin сотув"))
+    await h.say(OWNER, garmin)  # the department by its number in the list
+    await h.say(OWNER, "1")  # the role by its number
+    await h.say(OWNER, "ҳа")
     async with session_scope() as s:
         assert (await by_telegram(s, STRANGER)).department == "Garmin сотув"
 
 
-async def test_hr_cannot_make_an_owner_or_change_roles_with_forged_buttons(h, session_scope):
+async def test_hr_cannot_make_an_owner_or_change_roles(h, session_scope):
     await h.say(STRANGER, "/start")
-    await h.press(HR, JoinCb(action="add", tg=STRANGER).pack())
+    await h.say(HR, f"{STRANGER} ни ходим қилиб қўш")
     await h.say(HR, "Директор")
     await h.say(HR, "Ёлғон Эга")
-    await h.say(HR, "Раҳбарият")
-    assert "Эгаси" not in [t for t, _ in h.buttons(HR)]
-    await h.press(HR, PickCb(field="addrole", value="owner").pack())  # forged
-    replies = await h.press(HR, PickCb(field="addok", value="yes").pack())
-    assert "ҳуқуқ" in replies[-1].lower()
+    replies = await h.say(HR, "Раҳбарият")
+    assert "Эгаси" not in replies[0]  # an owner role is not offered to HR
+    assert "Тушунмадим" in (await h.say(HR, "эгаси"))[0]  # and typing it does not work either
+    await h.say(HR, "бекор")
     async with session_scope() as s:
         assert await by_telegram(s, STRANGER) is None
-        mentor = await by_telegram(s, MENTOR)
-    await h.press(HR, RoleCb(action="set", emp_id=mentor.id, role="owner").pack())
-    assert "ҳуқуқ" in h.session.alerts[-1].lower()
+    assert (await h.say(HR, "E-0003 ролини owner қил"))[0] == "Бу амал учун ҳуқуқингиз йўқ."
+    assert (await h.say(HR, "/rol E-0003 owner"))[0] == "Бу амал учун ҳуқуқингиз йўқ."
     async with db.session_scope() as s:
-        assert (await s.execute(select(Employee).where(Employee.role == "owner"))).scalars().all()[0].telegram_user_id == OWNER
+        owners = (await s.execute(select(Employee).where(Employee.role == "owner"))).scalars().all()
+        assert [o.telegram_user_id for o in owners] == [OWNER]
 
 
-async def test_owner_changes_a_role_from_the_card_with_the_one_time_confirmation(h, session_scope):
+async def test_owner_changes_a_role_by_writing_with_the_one_time_confirmation(h, session_scope):
     replies = await h.say(OWNER, f"/profil {MENTOR}")
     assert "Устозов Анвар" in replies[0] and "Роль: Ходим" in replies[0]
-    await h.press(OWNER, btn(h, OWNER, "Ролни ўзгартириш"))
-    await h.press(OWNER, btn(h, OWNER, "Раҳбар"))
-    assert "Роль ўзгариши лойиҳаси" in h.to(OWNER)[-1]
-    await h.press(OWNER, btn(h, OWNER, "Тасдиқлаш"))
-    assert "роль — Раҳбар" in h.to(OWNER)[-1]
+    replies = await h.say(OWNER, "E-0003 ролини раҳбар қил")
+    assert "Роль ўзгариши лойиҳаси" in replies[0] and "Ходим → Раҳбар" in replies[0]
+    async with session_scope() as s:
+        assert (await by_telegram(s, MENTOR)).role == "employee"  # a draft until «ҳа»
+    assert "роль — Раҳбар" in (await h.say(OWNER, "ҳа"))[0]
     async with session_scope() as s:
         assert (await by_telegram(s, MENTOR)).role == "manager"
+    # the same «ҳа» again changes nothing: no draft is waiting any more
+    assert not any("роль —" in r for r in await h.say(OWNER, "ҳа"))
 
 
-async def test_hr_edits_position_but_sees_no_role_button_and_employees_see_nothing(h):
-    replies = await h.say(HR, "/profil E-0003")
-    assert "Устозов Анвар" in replies[0]
-    assert [t for t, _ in h.buttons(HR)] == ["Лавозимни белгилаш", "Бўлимни ўзгартириш"]
-    await h.press(HR, btn(h, HR, "Бўлимни ўзгартириш"))
+async def test_hr_edits_department_and_employees_see_nothing(h):
+    replies = await h.say(HR, "E-0003 профили")
+    assert "Устозов Анвар" in replies[0] and "ролини" not in replies[0]  # only an owner changes roles
+    replies = await h.say(HR, "E-0003 бўлими")
+    assert "Янги бўлимни ёзинг" in replies[0]
     assert "Бўлим: Londry" in (await h.say(HR, "Londry"))[0]
     assert (await h.say(MENTOR, "/profil E-0001"))[0] == "Бу амал учун ҳуқуқингиз йўқ."
 
 
-async def test_staff_list_points_to_the_profile_command(h):
-    replies = await h.say(OWNER, "/xodimlar")
-    assert re.search(r"/profil E-\d{4}", replies[0])
+async def test_staff_list_says_what_to_write(h):
+    replies = await h.say(OWNER, "ходимлар")
+    assert "«E-0003 профили»" in replies[0]
 
 
-# --------------------------------------------------------------------------- the Menu button's command list
+# --------------------------------------------------------------------------- no Menu button
 
 def _menus(h: Harness) -> dict[int, list[str]]:
-    """Wrap the fake Telegram so the command lists HARI sets are recorded per chat."""
+    """Wrap the fake Telegram so the command lists HARI sets or removes are recorded per chat."""
     from aiogram.methods import DeleteMyCommands, SetMyCommands
 
     menus: dict[int, list[str]] = {}
@@ -149,23 +151,16 @@ def _menus(h: Harness) -> dict[int, list[str]]:
     return menus
 
 
-async def test_each_person_gets_the_menu_for_their_role(h, session_scope):
+async def test_the_menu_button_is_removed_for_everyone(h):
     from hari.bot import commands
 
     menus = _menus(h)
     await commands.install(h.bot)
-    assert menus[0] == ["start", "help"]  # strangers and applicants
-    assert "yangi" not in menus[MENTOR] and "reja" in menus[MENTOR] and "rol" not in menus[MENTOR]
-    assert {"yangi", "xodimlar", "profil", "taklif"} <= set(menus[HR]) and "rol" not in menus[HR]
-    assert "rol" in menus[OWNER]
-
-    await h.say(OWNER, "/rol E-0003 hr")
-    await h.press(OWNER, btn(h, OWNER, "Тасдиқлаш"))
-    assert "xodimlar" in menus[MENTOR]  # the list follows the new role
+    assert menus[0] == [] and menus[MENTOR] == [] and menus[HR] == [] and menus[OWNER] == []
 
 
-async def test_menu_commands_open_the_same_screens_as_the_buttons(h):
+async def test_slash_commands_still_work_when_typed(h):
     assert "мослашув режаси бириктирилмаган" in (await h.say(MENTOR, "/reja"))[0]
     assert "ID: E-0003" in (await h.say(MENTOR, "/profilim"))[0]
-    assert (await h.say(MENTOR, "/murojaat"))[0] == "Мурожаат турини танланг:"
+    assert "Қандай мурожаат?" in (await h.say(MENTOR, "/murojaat"))[0]
     assert (await h.say(HR, "/navbat"))[0] == "Иш навбатингиз бўш."
