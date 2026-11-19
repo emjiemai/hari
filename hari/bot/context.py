@@ -13,6 +13,7 @@ from aiogram.types import Message
 from hari.bot import texts as T
 from hari.bot.ui import NO_KEYBOARD
 from hari.db.models import Employee
+from hari.translit import cyrillic_to_latin
 
 
 class Pending(StatesGroup):
@@ -41,7 +42,25 @@ class Ctx:
         # The first reply also takes away the old menu keyboard on phones that still show it.
         markup = None if self._keyboard_cleared else NO_KEYBOARD
         self._keyboard_cleared = True
-        await self.message.answer(T.say(self.emp, text), reply_markup=markup)
+        await self.message.answer(in_their_script(self.emp, self.text, text), reply_markup=markup)
+
+
+def in_their_script(emp: Employee | None, said: str | None, text: str) -> str:
+    """HARI's reply in the alphabet the person just wrote in: someone set to Cyrillic who writes in Latin
+    gets Latin back, like a person would answer; otherwise their chosen script."""
+    if emp is not None and emp.language == "uz_cyrl" and written_in_latin(said or ""):
+        return cyrillic_to_latin(text)
+    return T.say(emp, text)
+
+
+def written_in_latin(text: str) -> bool:
+    """The person typed this message in the Latin alphabet ("ishlayapsanmi?"). Short words like "ha" and
+    slash commands say nothing about it, and a code like HR-2026-11-0003 inside Cyrillic text does not count."""
+    if not text or text.startswith("/"):
+        return False
+    latin = sum(1 for ch in text if "a" <= ch.lower() <= "z")
+    cyrillic = sum(1 for ch in text if "Ѐ" <= ch <= "ӿ")
+    return latin >= 4 and latin > 3 * cyrillic
 
 
 async def ask_confirm(ctx: Ctx, summary: str, action: str, args: dict) -> None:

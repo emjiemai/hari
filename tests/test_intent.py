@@ -172,3 +172,36 @@ async def test_which_one_is_asked_with_numbers(h, monkeypatch):
     assert "Қайси қадам" in replies[0] and "1. Компания миссияси" in replies[0]
     replies = await h.say(NEW, "2")
     assert "«Одоб ва хавфсизлик қоидалари» — танишганингиз қайд этилди." in replies[0]
+
+
+# --------------------------------------------------------------------------- talking like a person
+
+@pytest.mark.parametrize("text,reply", [
+    ("ishlayapsan?", "Ишлаяпман, албатта. Нима керак эди?"),
+    ("Ишлаяпсизми", "Ишлаяпман, албатта. Нима керак эди?"),
+    ("salom", "Ассалому алайкум! Эшитаман."),
+    ("Раҳмат", "Арзимайди!"),
+    ("Salom, taʼtil necha kun?", None),  # a question with a hello in front
+    ("hisobot qachon", None),  # "hi" only as a whole word
+    ("машина ишлаяптими", None),  # about a machine, not about HARI
+])
+def test_small_talk_without_the_ai(text, reply):
+    from hari.answer import small_talk
+
+    assert small_talk(text) == reply
+
+
+async def test_written_in_latin_is_answered_in_latin(h):
+    from hari.translit import cyrillic_to_latin
+
+    replies = await h.say(NEW, "ishlayapsanmi?")  # the AI is not reachable in tests: the small-talk reply
+    assert replies == [cyrillic_to_latin("Ишлаяпман, албатта. Нима керак эди?")]
+    replies = await h.say(NEW, "Ишлаяпсанми?")  # the same in Cyrillic: Cyrillic back
+    assert replies == ["Ишлаяпман, албатта. Нима керак эди?"]
+
+
+def test_the_prompt_asks_for_a_colleague_not_a_brochure():
+    from hari.answer import SYSTEM_PROMPT
+
+    assert "not like a brochure" in SYSTEM_PROMPT and "Ишлаяпман, албатта. Нима керак эди?" in SYSTEM_PROMPT
+    assert "say what you can help with" not in SYSTEM_PROMPT

@@ -14,6 +14,7 @@ from hari.config import settings
 from hari.guard import is_consent
 from hari.knowledge.loader import load_directory
 from hari.llm import LLMReply
+from hari.translit import cyrillic_to_latin as lat
 from tests.conftest import write_doc
 from tests.test_bot_flow import HR, MENTOR, Harness  # noqa: F401  (h fixture is defined there)
 from tests.test_bot_flow import h  # noqa: F401
@@ -56,16 +57,16 @@ async def kb(docs, session_scope, monkeypatch):
 
 async def test_screenshot_conversation_ends_in_a_request_not_a_question(h, kb):  # noqa: F811
     first = await h.say(EMP, "Kasalman, ishga kelolmayman")
-    assert "Тузалиб кетинг" in first[0]
+    assert lat("Тузалиб кетинг") in first[0]  # written in Latin: answered in Latin, like a person would
 
     second = await h.say(EMP, "ha tayyorlab yubor")
-    assert "мурожаат очиш мумкин" in second[0] and "Айнан қайси" not in second[0]
-    assert "Мурожаат очай десангиз, «ҳа» деб ёзинг." in second[0]  # how to open it: by writing
+    assert lat("мурожаат очиш мумкин") in second[0] and lat("Айнан қайси") not in second[0]
+    assert lat("Мурожаат очай десангиз, «ҳа» деб ёзинг.") in second[0]  # how to open it: by writing
 
     calls_before = len(ScriptedLLM.calls)
     third = await h.say(EMP, "tasdiqlayman")
     assert len(ScriptedLLM.calls) == calls_before  # a "yes" to the offer is not another AI question
-    assert "Мурожаат қабул қилинди: HR-" in third[-1]
+    assert lat("Мурожаат қабул қилинди: HR-") in third[-1]
     # HR sees what the person actually said, not only "send it"
     assert "Kasalman" in h.to(HR)[-1] and "ha tayyorlab yubor" in h.to(HR)[-1]
 

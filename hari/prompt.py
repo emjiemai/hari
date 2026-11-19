@@ -13,7 +13,7 @@ import json
 from hari.config import SPEC_VERSION
 from hari.db.models import Employee
 
-PROMPT_VERSION = "2.1.0"  # 2.1.0: no buttons — typed actions, offers opened by «ҳа»; 2.0.3: chat history
+PROMPT_VERSION = "2.1.1"  # 2.1.1: talks like a colleague, mirrors the script; 2.1.0: no buttons — typed actions, offers opened by «ҳа»; 2.0.3: chat history
 
 AGENT_PROMPT = """You are HARI, the authorized HR operations assistant for EMJIEM.
 Help the company maintain capable staff, reliable work, lawful processes, secure information and \

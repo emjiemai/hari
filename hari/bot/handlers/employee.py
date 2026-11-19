@@ -24,7 +24,7 @@ from hari.answer import answer_question, source_line
 from hari.guard import match_rule
 from hari.bot import texts as T
 from hari.bot.common import staff_by_tg
-from hari.bot.context import Ctx, ask_confirm, ask_pick
+from hari.bot.context import Ctx, ask_confirm, ask_pick, in_their_script
 from hari.bot.notifications import acceptor_label, tell_case_handler, tell_step_acceptor
 from hari.bot.ui import notify
 from hari.config import settings
@@ -234,8 +234,9 @@ async def _submit_proof(message: Message, bot: Bot, tg: int, step_id: str, text:
         async with session_scope() as session:
             await nonresponse.track(session, acceptor, "step", step.id,
                                     f"Мослашув: {owner.full_name} — «{step.title}» қабул кутмоқда", bool(delivered))
-    await message.answer(T.say(emp, T.PROOF_SENT.format(acceptor=acceptor_label(step)) if delivered
-                               else T.PROOF_NO_ACCEPTOR))
+    await message.answer(in_their_script(emp, message.text or message.caption,
+                                         T.PROOF_SENT.format(acceptor=acceptor_label(step)) if delivered
+                                         else T.PROOF_NO_ACCEPTOR))
 
 
 @router.message(AskProof.waiting, F.text | F.photo | F.document)
@@ -416,7 +417,7 @@ async def open_and_tell(message: Message, bot: Bot, telegram_user_id: int, case_
     text = T.CASE_OPENED.format(number=case.number, label=case.title, who=who, due=fmt(case.first_response_due))
     if (about_role or (about is not None and about.role in ("hr", "owner"))) and independent is None:
         text += "\n\n" + T.COMPLAINT_NO_INDEPENDENT
-    await message.answer(T.say(emp, text))
+    await message.answer(in_their_script(emp, message.text, text))
 
 
 async def _any_hr(session) -> list[Employee]:  # noqa: ANN001
