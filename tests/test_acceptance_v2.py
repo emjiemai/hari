@@ -328,7 +328,7 @@ async def test_t17_rights_question_gets_a_neutral_answer_and_no_mark(loaded, ses
     llm = FakeLLM(lambda user: {"answer": "Ҳа, йиллик меҳнат таътилига ҳақлисиз.", "kind": "grounded",
                                 "source_ids": source_ids(user)[:1]})
     result = await ask(session_scope, emp, "Таътилга ҳуқуқим борми?", today, llm)
-    assert result.outcome == "answered" and "Манба: «Ходим ҳуқуқлари»" in result.text
+    assert result.outcome == "answered" and "Манба: «Ходим ҳуқуқлари»" in result.source and "Манба" not in result.text
     async with session_scope() as s:
         log = (await s.execute(select(AnswerLog))).scalar_one()
         assert log.intent == "knowledge"  # the log keeps no text and no judgement of the person

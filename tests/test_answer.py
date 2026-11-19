@@ -51,7 +51,7 @@ async def test_good_answer_carries_server_built_source(emp, session_scope, today
                                 "source_ids": [first_source_id(user)], "clarify": None, "need_human": False})
     result = await ask(session_scope, emp, "Таътилга қандай чиқаман?", today, llm)
     assert result.outcome == "answered"
-    assert "Манба: «Таътил тартиби», 1-версия" in result.text
+    assert "Манба: «Таътил тартиби», 1-версия" in result.source and "Манба" not in result.text
     assert len(llm.calls) == 1
 
 
@@ -108,7 +108,7 @@ async def test_model_saying_need_human_gives_no_source_reply(emp, session_scope,
 async def test_a12_llm_down_still_answers_with_approved_excerpt(emp, session_scope, today):
     result = await ask(session_scope, emp, "Таътил тартиби қандай?", today, FakeLLM(fail=True))
     assert result.outcome == "fallback"
-    assert "HR тартибни текширади" in result.text and "Манба:" in result.text
+    assert "HR тартибни текширади" in result.text and "Манба:" in result.source
 
 
 async def test_paused_bot_answers_nothing(emp, session_scope, today, monkeypatch):
@@ -208,7 +208,7 @@ async def test_model_gets_every_readable_example_and_answers_new_wording(with_ex
     # Worded nothing like the example, and no search word in common with it
     result = await ask(session_scope, with_examples, "bekor o'tiribman, nima qilay?", today, llm)
     assert result.outcome == "answered" and len(llm.calls) == 1
-    assert "Манба: HR йўриқномаси — Вазифа бериш" in result.text
+    assert "Манба: HR йўриқномаси — Вазифа бериш" in result.source
     assert "намунаси" not in result.text and "версия" not in result.text  # no internal wording
 
 

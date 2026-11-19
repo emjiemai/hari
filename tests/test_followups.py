@@ -149,3 +149,13 @@ def test_consent_words(text):
                                   "ha lekin oyligim qachon tushadi", "boshim ogridi deb aytdimku", "оклад"])
 def test_not_consent(text):
     assert not is_consent(text)
+
+
+async def test_the_source_is_named_only_when_asked(h, kb):  # noqa: F811
+    first = await h.say(EMP, "Kasalman, ishga kelolmayman")
+    assert lat("Тузалиб кетинг") in first[0] and "Manba" not in first[0]  # no source line under the answer
+    line = "Манба: HR йўриқномаси — Таътил ва касаллик"
+    assert await h.say(EMP, "манбаси?") == [line]
+    assert await h.say(EMP, "manbasi qayerda") == [lat(line)]  # asked in Latin: told in Latin
+    restarted = Harness()  # a redeploy forgets the chat's memory: the answer log still knows
+    assert await restarted.say(EMP, "қаердан билдингиз?") == [line]

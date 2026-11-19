@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hari import egress
 from hari.config import settings
-from hari.db.models import AnswerLog, Employee
+from hari.db.models import AnswerLog, Employee, KnowledgeDocument
 from hari.guard import clean_model_text, is_polite, leaks_secret, match_rule, reply_for
 from hari.translit import normalize
 from hari.knowledge.search import Hit, allowed_chunks, search
@@ -143,6 +143,7 @@ class Answer:
     model: str | None = None
     log_id: str | None = None
     auto_case: str | None = None  # case type the caller opens at once, in HARI's own minimal words
+    source: str | None = None  # «Манба: …» — not shown with the answer; said when the person asks for it
 
 
 def source_line(hits: list[Hit]) -> str:
@@ -158,17 +159,38 @@ def source_line(hits: list[Hit]) -> str:
                 label += f" ({SOURCE_TYPE_LABELS[h.source_type]})"
         if label not in seen:
             seen.append(label)
-    line = "Манба: " + "; ".join(seen[:3])
+    return "Манба: " + "; ".join(seen[:3])
+
+
+async def logged_source(session: AsyncSession, emp: Employee) -> str | None:
+    """The source of this person's last answer that rested on documents, from the answer log."""
+    log = (await session.execute(select(AnswerLog).where(
+        AnswerLog.employee_id == emp.id, AnswerLog.outcome.in_(("answered", "fallback")))
+        .order_by(AnswerLog.at.desc()).limit(1))).scalar_one_or_none()
+    if log is None or not log.source_ids:
+        return None
+    hits = []
+    for ref in log.source_ids.split(","):
+        doc_id, _, version = ref.partition(":")
+        doc = await session.get(KnowledgeDocument, doc_id)
+        if doc is not None:
+            hits.append(Hit("", doc.doc_id, doc.title, version or doc.version, "", "", 0,
+                            source_type=doc.source_type or ""))
+    return source_line(hits) if hits else None
+
+
+def review_note(hits: list[Hit]) -> str:
+    """A warning that stays in the answer itself: the rule it rests on is due for review."""
     if any(h.review_overdue for h in hits):
-        line += "\nЭслатма: манбани қайта кўриб чиқиш муддати ўтган — амалдаги ҳолатини HR тасдиқлайди."
-    return line
+        return "\n\nЭслатма: бу қоида қайта кўриб чиқилиши керак эди — амалдаги ҳолатини HR тасдиқлайди."
+    return ""
 
 
 def fallback_text(hits: list[Hit]) -> str:
-    """No model (A12): show the approved text itself, shortened, with its source."""
+    """No model (A12): show the approved text itself, shortened. Its source is named when asked."""
     top = hits[0]
     excerpt = top.text if len(top.text) <= 700 else top.text[:700].rsplit(" ", 1)[0] + " …"
-    return f"Тасдиқланган ҳужжатдан парча:\n\n{excerpt}\n\n{source_line([top])}"
+    return f"Тасдиқланган ҳужжатдан парча:\n\n{excerpt}" + review_note([top])
 
 
 NO_SOURCE_TEXT = ("Бу савол бўйича тасдиқланган жавоб топилмади. Тахмин қилиб жавоб бермайман. "
@@ -314,7 +336,7 @@ async def _answer(session: AsyncSession, emp: Employee, question: str, today: da
         best = await search(session, emp, lookup, today)  # documents and examples together
         if best:
             return Answer(fallback_text(best), "knowledge", "fallback", sources=best[:1], offer_case="question",
-                          model=model)
+                          model=model, source=source_line(best[:1]))
         return Answer(NO_SOURCE_TEXT, "knowledge", "no_source", offer_case="question", model=model)
 
     system = with_base(SYSTEM_PROMPT % {"language": LANG_NAMES.get(emp.language, LANG_NAMES["uz_cyrl"])})
@@ -352,5 +374,6 @@ async def _answer(session: AsyncSession, emp: Employee, question: str, today: da
             # greeting / about HARI / "a request can be opened": states no company rule
             return Answer(text, "chat", "chat", offer_case=offer, model=reply.model)
         return await without_model(reply.model)  # a rule-like answer that names no source is not sent (T26)
-    return Answer(f"{text}\n\n{source_line(used)}", "knowledge", "answered", sources=used, offer_case=offer,
-                  model=reply.model)
+    # The answer goes out without its source line; HARI names the source when the person asks (Answer.source).
+    return Answer(text + review_note(used), "knowledge", "answered", sources=used, offer_case=offer,
+                  model=reply.model, source=source_line(used))

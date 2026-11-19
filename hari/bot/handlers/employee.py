@@ -20,7 +20,7 @@ from hari import digest, memory, nonresponse
 from hari import intent as I
 from hari import onboarding as O
 from hari.access import can_read_document
-from hari.answer import answer_question, source_line
+from hari.answer import answer_question, logged_source
 from hari.guard import match_rule
 from hari.bot import texts as T
 from hari.bot.common import staff_by_tg
@@ -30,7 +30,6 @@ from hari.bot.ui import notify
 from hari.config import settings
 from hari.db.models import Employee, KnowledgeChunk, KnowledgeDocument, OnboardingStep
 from hari.db.session import session_scope
-from hari.knowledge.search import Hit
 from hari.translit import normalize
 from hari.worktime import fmt, now_utc, today_local, work_days_between
 
@@ -175,8 +174,7 @@ async def read_doc(ctx: Ctx, args: dict) -> None:
             .order_by(KnowledgeChunk.position)
         )).scalars().all()
     body = "\n\n".join(f"{c.section}\n{c.text}" if c.section != doc.title else c.text for c in chunks)
-    hit = Hit("", doc.doc_id, doc.title, doc.version, "", "", 0)
-    await ctx.say(f"{doc.title}\n\n{body}"[:3600] + f"\n\n{source_line([hit])}\n\nЎқиб бўлгач, «ўқидим» деб ёзинг.")
+    await ctx.say(f"{doc.title}, {doc.version}-версия\n\n{body}"[:3600] + "\n\nЎқиб бўлгач, «ўқидим» деб ёзинг.")
 
 
 async def step_read(ctx: Ctx, args: dict) -> None:
@@ -534,6 +532,15 @@ async def help_(ctx: Ctx, args: dict) -> None:
 
 # --------------------------------------------------------------------------- questions
 
+async def source(ctx: Ctx, args: dict) -> None:
+    """Where the last answer came from. Answers go out without a source line; this is how to see it."""
+    line = (await ctx.state.get_data()).get("last_source")
+    if not line:  # after a restart the chat's memory is gone: the answer log still knows
+        async with session_scope() as session:
+            line = await logged_source(session, ctx.emp)
+    await ctx.say(line or "Охирги жавобим бирор ҳужжатга таянмаган эди — у оддий суҳбат эди.")
+
+
 FOLLOW_UP_MINUTES = 10  # a short reply joins the previous message in a request only within this time
 
 
@@ -556,6 +563,8 @@ async def question(ctx: Ctx, args: dict) -> None:
             and now_utc() - turns[-1][3] <= timedelta(minutes=FOLLOW_UP_MINUTES)):
         body = f"{turns[-1][0]}\n{text}"
     await ctx.state.update_data(offer=result.offer_case, last_question=body if result.offer_case else None)
+    if result.source:  # not shown with the answer: said when they ask "манбаси?"
+        await ctx.state.update_data(last_source=result.source)
     if result.auto_case and not settings.hari_paused:
         # A stated wish to leave: HR gets the fact in HARI's own words, once a day at most — never the
         # message itself (spec 2.0 §18, T11). The reply above already told the person who sees it.
@@ -571,5 +580,5 @@ async def question(ctx: Ctx, args: dict) -> None:
 ACTIONS = {
     "question": question, "help": help_, "plan": plan, "read_doc": read_doc, "step_read": step_read,
     "step_done": step_done, "new_case": new_case, "my_cases": my_cases, "case_show": case_show,
-    "my_profile": my_profile, "set_language": set_language, "forget": forget,
+    "my_profile": my_profile, "set_language": set_language, "forget": forget, "source": source,
 }

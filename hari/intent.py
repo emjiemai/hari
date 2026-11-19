@@ -53,6 +53,7 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
     Action("question", "all", "a question, a greeting, something they tell HARI, anything about company rules, "
            "or anything that is not another action"),
     Action("help", "all", "what HARI can do / how to use it"),
+    Action("source", "all", "where the information in HARI's last answer came from: which document or rule"),
     Action("plan", "all", "show my onboarding plan and today's open steps"),
     Action("read_doc", "all", "open the document of one of my plan steps", '{"step": ref from my_steps}'),
     Action("step_read", "all", "I have read / got acquainted with a reading step of my plan",
@@ -201,6 +202,10 @@ for _action, _words in {
     "new_employee": ("янги ходим", "янги ходим қўшиш", "ходим қўшиш", "новый сотрудник"),
     "applications": ("аризалар", "номзодлар", "янги аризалар", "заявки на работу", "кандидаты"),
     "forget": ("унут", "суҳбатни унут", "ҳаммасини унут", "забудь"),
+    "source": ("манба", "манбаси", "манбаси қаерда", "манбаси қани", "манбасини айт", "манбасини айтинг",
+               "манбаси нима", "манбаси қанақа", "қаердан олдинг", "қаердан олдингиз", "қаердан билдинг",
+               "қаердан билдингиз", "бу қаердан", "буни қаердан билдинг", "қайси ҳужжатда", "қайси ҳужжатда ёзилган",
+               "источник", "откуда", "откуда это", "откуда информация", "source"),
 }.items():
     for _w in _words:
         _PHRASES[_norm(_w)] = _action
