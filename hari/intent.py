@@ -30,6 +30,7 @@ llm_factory = LLMClient  # tests replace it
 
 CASE_RE = re.compile(r"(?<![\w-])(?:HR|НР)-(\d{4})-(\d{2})-(\d{4})(?!\d)", re.IGNORECASE)
 APP_RE = re.compile(r"(?<![\w-])[AА]-(\d{4})-(\d{2})-(\d{4})(?!\d)", re.IGNORECASE)
+STEP_REF_RE = re.compile(r"(?<![\w-])[SСsс](\d{1,2})(?!\d)")  # S1, S2… in a work queue (Latin or Cyrillic S)
 CODE_RE = re.compile(r"(?<![\w-])[EЕ]-?(\d{4})(?!\d)", re.IGNORECASE)
 TG_RE = re.compile(r"(?<!\d)(\d{3,15})(?!\d)")  # only read next to "ходим қилиб қўш" and the like
 
@@ -331,6 +332,13 @@ def _with_reference(raw: str, words: str) -> Intent | None:
         tg = telegram_id(raw)
         if tg and _has(words, "ходим қилиб", "қўш", "добав"):
             return Intent("add_person", {"tg": tg})
+    step_ref = STEP_REF_RE.search(raw)
+    if step_ref and not (case or app or code):  # «S1 ни қабул қил» from the work queue or the morning brief
+        item = f"S{step_ref.group(1)}"
+        if _has(words, "қайтар", "вернут", "верни"):
+            return Intent("step_return", {"item": item, "reason": after_colon(raw)})
+        if _has(words, "қабул", "принят", "принима"):
+            return Intent("step_accept", {"item": item})
     if words in _ACCEPT:
         return Intent("step_accept", {"item": None}, "keyword")
     if not (case or app or code):

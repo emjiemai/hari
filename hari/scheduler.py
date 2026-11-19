@@ -7,7 +7,8 @@ stops a second copy (A09). Ordinary employees get at most PROACTIVE_DAILY_LIMIT 
 a day, only on their work days and hours (spec §10, A07).
 
 What a tick does (every minute, all times Asia/Tashkent):
-- newcomers whose first day came become active; the morning onboarding plan goes out;
+- newcomers whose first day came become active; each work morning everyone with something to do gets
+  one message saying what it is and what to write back (hari.agenda);
 - the no-reply rule (hari/nonresponse.py): one reminder at 120 work minutes, the manager at 240,
   the owner's digest at 480;
 - the owner's digest once a day after OWNER_DIGEST_TIME, the weekly report on Friday;
@@ -32,11 +33,11 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hari import budget, digest, integrations, memory, nonresponse, retention
-from hari import onboarding as O
+from hari import agenda, budget, digest, integrations, memory, nonresponse, retention
+from hari.access import is_staff
 from hari.bot import texts as T
 from hari.config import settings
-from hari.db.models import Application, Employee, OnboardingPlan, OutboundMessage, Vacancy, as_utc
+from hari.db.models import Application, Employee, OutboundMessage, Vacancy, as_utc
 from hari.db.session import session_scope
 from hari.outbox import PROACTIVE_KINDS, proactive_sent_today, queue
 from hari.worktime import add_work_hours, is_work_time, local, now_utc, today_local
@@ -93,26 +94,23 @@ async def deliver(bot: Bot, msg_id: str) -> bool:
     return outcome == SENT
 
 
-def nudge_text(emp: Employee, steps: list) -> str:  # noqa: ANN001
-    lines = [f"Хайрли тонг, {emp.full_name.split()[1] if len(emp.full_name.split()) > 1 else emp.full_name}. "
-             "Мослашув режангиздаги очиқ қадамлар:"]
-    lines += [f"• {s.title}" for s in steps[:5]]
-    lines.append("\nБатафсил: «режам» деб ёзинг. Қайси қадам тушунарсиз бўлса, сўранг.")
-    return "\n".join(lines)
-
-
-async def onboarding_nudges(session: AsyncSession, now: datetime) -> list[str]:
+async def morning_briefs(session: AsyncSession, now: datetime) -> list[str]:
+    """Each work morning, everyone with something to do hears what it is (hari.agenda): newcomers their
+    steps, mentors and managers the results to accept, handlers their open requests, HR and owners the
+    applications waiting. One message a day, on their work days and hours, within the daily limit (A07)."""
+    people = (await session.execute(select(Employee).where(
+        Employee.status == "active", Employee.telegram_user_id.is_not(None)).order_by(Employee.code))).scalars().all()
     queued: list[str] = []
-    plans = (await session.execute(select(OnboardingPlan).where(OnboardingPlan.status == "active"))).scalars().all()
-    for plan in plans:
-        emp = await session.get(Employee, plan.employee_id)
-        if emp is None or emp.status != "active" or not emp.telegram_user_id or not is_work_time(emp, now):
-            continue  # on leave/absent, not bound yet, or outside their hours: wait (A07)
-        await session.refresh(plan, ["steps"])
-        steps = O.due_open_steps(emp, plan, today_local(now))
-        if not steps:
+    for emp in people:
+        if not is_staff(emp) or not is_work_time(emp, now):
+            continue  # not verified, or outside their hours: wait (A07)
+        key = f"brief:{emp.id}:{today_local(now)}"
+        if (await session.execute(select(OutboundMessage.id).where(OutboundMessage.idempotency_key == key))).first():
             continue
-        msg = await queue(session, emp, "onboarding", f"onb:{emp.id}:{today_local(now)}", nudge_text(emp, steps), now)
+        text = await agenda.morning_brief(session, emp, now)
+        if not text:
+            continue
+        msg = await queue(session, emp, "brief", key, text, now)
         if msg:
             queued.append(msg.id)
     return queued
@@ -186,11 +184,20 @@ async def applicants_waiting(session: AsyncSession, now: datetime) -> list[str]:
         text = (f"Ҳей, {app.number} — {app.full_name or 'номзод'}{where} сизни кутяпти. "
                 "Кўриб чиқиб, суҳбатга чақиринг ёки рад этинг.")
         for person in people:
+            if await _brief_listed(session, person, app, now):
+                continue
             msg = await queue(session, person, "applicant_wait", f"app_wait:{app.id}:{person.id}:{today_local(now)}",
                               text, now)
             if msg:
                 queued.append(msg.id)
     return queued
+
+
+async def _brief_listed(session: AsyncSession, person: Employee, app: Application, now: datetime) -> bool:
+    """Today's morning brief to this person was made after the application came in, so it already listed it."""
+    brief = (await session.execute(select(OutboundMessage).where(
+        OutboundMessage.idempotency_key == f"brief:{person.id}:{today_local(now)}"))).scalar_one_or_none()
+    return brief is not None and as_utc(brief.created_at) >= as_utc(app.submitted_at)
 
 
 async def unreported(session: AsyncSession, now: datetime) -> list[str]:
@@ -212,7 +219,7 @@ async def tick(bot: Bot, now: datetime | None = None) -> int:
     async with session_scope() as session:
         await activate_started(session, now)
         ids = await pending_retries(session, now)
-        ids += await onboarding_nudges(session, now)
+        ids += await morning_briefs(session, now)  # before applicants_waiting: it skips what a brief listed
         ids += await applicants_waiting(session, now)
         ids += await nonresponse.sweep(session, now)
         ids += await system_alerts(session, now)

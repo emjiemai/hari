@@ -47,7 +47,7 @@ message that is not a set phrase — count it in `LLM_DAILY_CALL_LIMIT`.
 | No AI | No key, provider down or over limit: the approved excerpt with its source is shown instead (A12) | §28 |
 | Onboarding | 90-day plan (day 1, 2–7, 8–15, 30, 60, 90). Read steps: the employee's «танишдим». Tasks/meetings: proof → the mentor/manager/HR accepts or returns with a reason. «Бажардим» is never acceptance | §9 |
 | HR requests | 11 types, number HR-YYYY-MM-NNNN, routed (leave → manager, pay → accountant, legal → lawyer, …), 4 work-hour first-answer deadline. A complaint never goes to the person it's about; about HR → owner (A13). "Answered" and "closed" are separate | §10, §18, §32 |
-| Timers | Morning onboarding reminder only on work days and hours, at most 2 planned messages a day (A07). Late first answers → handler + owner, once. Messages are saved before sending, so a crash neither loses nor doubles one (A09) | §10 |
+| Timers | A morning brief (below) only on work days and hours, at most 2 planned messages a day (A07). Late first answers → handler + owner, once. Messages are saved before sending, so a crash neither loses nor doubles one (A09) | §10 |
 | Audit | Who did what to which object and the outcome, in `audit_events`. The answer log keeps intent, sources and outcome, never the question text | §20, §30 |
 | Emergency stop | `HARI_PAUSED=true`: no AI answers, no proactive messages | §1 |
 
@@ -92,6 +92,24 @@ card, shadow comparison of model versions and drift monitoring (§21–22); DLP 
 backup and restore drill (§23, T29); the 120-request multilingual acceptance set reviewed by a lawyer and HR (§26);
 the owner panel as a web page (§28 — it is the Telegram digest). English fixed texts (rules fire in English, the
 reply is Uzbek or Russian).
+
+## HARI runs the day itself
+
+HARI does not wait to be asked (`hari/agenda.py`). From the data it already holds it works out what each person
+should do and tells them, the way an HR coordinator would:
+
+- **Morning brief** — in the first three hours of each work day, everyone who has something waiting gets one
+  message: a newcomer their onboarding steps for today (a returned one first), a mentor or manager the step results
+  sent to them (S1, S2…), a request handler the requests they hold with their deadlines, HR and owners the
+  applications waiting for a decision or a deletion request. Each line says what to write back
+  («S1 ни қабул қил», «HR-… га жавоб: …», «A-… ни кўрсат»). Only a person's own responsibilities are listed, and
+  things that arrived today are left out (they were told when it arrived). Nothing waiting → no message.
+- **The next step** — when a step is read or accepted, the newcomer is told what comes next.
+- **Joining** — a newcomer who opens their link is told at once where to start; their mentor and manager are
+  told the person is here and what is expected of them.
+
+All of it is built by the server from the database; no AI writes or decides it. It goes through the outbox:
+once a day, within `PROACTIVE_DAILY_LIMIT`, never twice, and `HARI_PAUSED=true` stops it.
 
 ## Run it
 

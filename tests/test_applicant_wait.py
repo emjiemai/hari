@@ -48,4 +48,6 @@ async def test_decided_application_is_not_reminded(session_scope):
     await seed(session_scope, status="interview")
     bot = FakeBot()
     await scheduler.tick(bot, at(WEDNESDAY, 10, 30))
-    assert bot.sent == []
+    assert not any("сизни кутяпти" in text for _, text in bot.sent)  # no "waiting for a decision" alert
+    # the morning brief still says what is next after an interview: score it, then hire or reject
+    assert all("суҳбат баҳоси" in text for _, text in bot.sent)

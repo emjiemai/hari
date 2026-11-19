@@ -11,10 +11,11 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 from sqlalchemy import select
 
+from hari import agenda
 from hari import cases as C
 from hari import intent as I
 from hari import onboarding as O
-from hari.access import can_accept_step, can_handle_case, can_manage_employees
+from hari.access import can_handle_case, can_manage_employees
 from hari.apply.applications import mark_hired
 from hari.apply.report import tell_applicant
 from hari.apply.texts import t as apply_text
@@ -376,17 +377,7 @@ async def staff_list(ctx: Ctx, args: dict) -> None:
 
 # --------------------------------------------------------------------------- work queue
 
-async def queue_steps(session, me: Employee) -> list[tuple[str, OnboardingStep, Employee]]:  # noqa: ANN001
-    """Submitted step results this person may accept, as S1, S2… in the order they came."""
-    steps = (await session.execute(select(OnboardingStep).where(OnboardingStep.status == "submitted")
-                                   .order_by(OnboardingStep.submitted_at, OnboardingStep.id))).scalars().all()
-    mine = []
-    for s in steps:
-        plan = await session.get(OnboardingPlan, s.plan_id)
-        owner = await session.get(Employee, plan.employee_id)
-        if can_accept_step(me, s, owner):
-            mine.append((f"S{len(mine) + 1}", s, owner))
-    return mine
+queue_steps = agenda.queue_steps  # S1, S2…: the same numbers the morning brief uses
 
 
 async def queue_context(session, me: Employee) -> dict:  # noqa: ANN001
@@ -467,8 +458,11 @@ async def step_accept(ctx: Ctx, args: dict) -> None:
             return
         plan = await O.get_plan(session, owner.id)
         finished = plan is not None and plan.status == "done"
+        upcoming = None if finished else await agenda.next_step(session, owner)
     await ctx.say(f"Қабул қилинди: {owner.full_name} — «{step.title}».")
-    await notify(ctx.bot, owner, T.STEP_ACCEPTED_TO_EMP.format(title=step.title))
+    # The newcomer hears it was accepted and, like from a person, what to do next.
+    await notify(ctx.bot, owner, T.STEP_ACCEPTED_TO_EMP.format(title=step.title)
+                 + (f"\n\n{upcoming}" if upcoming else ""))
     if finished:
         await notify(ctx.bot, owner, T.PLAN_DONE)
 

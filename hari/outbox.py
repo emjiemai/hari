@@ -19,8 +19,9 @@ from hari.config import settings
 from hari.db.models import Employee, OutboundMessage
 from hari.worktime import today_local
 
-# Counted against the daily limit: the morning onboarding plan and reminders about waiting work.
-PROACTIVE_KINDS = {"onboarding", "reminder"}
+# Counted against the daily limit: the morning brief (earlier: the onboarding plan) and reminders about
+# waiting work.
+PROACTIVE_KINDS = {"brief", "onboarding", "reminder"}
 
 
 async def proactive_sent_today(session: AsyncSession, emp: Employee, day) -> int:  # noqa: ANN001

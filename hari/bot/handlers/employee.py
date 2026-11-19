@@ -14,6 +14,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 from sqlalchemy import select
 
+from hari import agenda
 from hari import cases as C
 from hari import digest, memory, nonresponse
 from hari import intent as I
@@ -191,7 +192,8 @@ async def step_read(ctx: Ctx, args: dict) -> None:
             return
         found = await O.get_plan(session, emp.id)
         finished = found is not None and found.status == "done"
-    await ctx.say(f"«{step.title}» — танишганингиз қайд этилди.")
+        upcoming = None if finished else await agenda.next_step(session, emp)
+    await ctx.say(f"«{step.title}» — танишганингиз қайд этилди." + (f"\n\n{upcoming}" if upcoming else ""))
     if finished:
         await ctx.say(T.PLAN_DONE)
 
