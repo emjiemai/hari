@@ -123,7 +123,7 @@ async def test_full_onboarding_journey(h):
     # the newcomer opens the link from their own Telegram
     replies = await h.say(NEW, f"/start {link.group(1)}")
     assert "Хуш келибсиз, Янгиев Ботир Акмалович" in replies[0] and "Устозов Анвар" in replies[0]
-    assert "тугма йўқ" in replies[0]
+    assert "шу ерга ёзаверинг" in replies[0] and "тугма" not in replies[0]
     assert "ишламайди" in (await h.say(STRANGER, f"/start {link.group(1)}"))[0]  # one-time
 
     # the plan, a read step, and a meeting step needing the mentor
@@ -174,9 +174,11 @@ async def test_full_onboarding_journey(h):
 
 async def test_typed_commands_without_ai(h):
     """Phrases and numbers work with no AI at all (A12): help, queue, staff list, profile, cancel."""
-    assert "тугма йўқ" in (await h.say(HR, "ёрдам"))[0]
-    assert "«янги ходим»" in (await h.say(HR, "ёрдам"))[0]
-    assert "«янги ходим»" not in (await h.say(MENTOR, "ёрдам"))[0]  # an employee sees only their own commands
+    hr_help = (await h.say(HR, "ёрдам"))[0]
+    assert "HR ёрдамчисиман" in hr_help and "янги ходим қўшиш" in hr_help and len(hr_help) < 600  # short, plain
+    assert "тугма" not in hr_help
+    mentor_help = (await h.say(MENTOR, "nima ish qo'lingdan keladi"))[0]
+    assert "HR yordamchisiman" in mentor_help and "yangi xodim" not in mentor_help  # only their own, in Latin
     assert "Иш навбатингиз бўш" in (await h.say(HR, "иш навбати"))[0]
     assert "Устозов Анвар" in (await h.say(HR, "ходимлар"))[0]
     assert "Бу амал учун ҳуқуқингиз йўқ." == (await h.say(MENTOR, "/xodimlar"))[0]
