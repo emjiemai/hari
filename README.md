@@ -93,6 +93,27 @@ backup and restore drill (§23, T29); the 120-request multilingual acceptance se
 the owner panel as a web page (§28 — it is the Telegram digest). English fixed texts (rules fire in English, the
 reply is Uzbek or Russian).
 
+## Applying for a job: a conversation, not a form
+
+The link (`t.me/mgmHaribot?start=apply`, or a stranger writing «ишга кирмоқчиман») starts a chat with HARI
+as a recruiter. The steps and rules are the spec's; the feel is a person's:
+
+- **Language** — no menu: HARI greets in Uzbek and Russian and takes the language and script from whatever they
+  write back («Здравствуйте» → Russian, «salom» → Uzbek Latin).
+- **Consent first** — plain words: HARI is an AI, what it asks, who sees it, a person decides. Nothing they write
+  reaches the AI before they agree («ҳа», «давом этамиз», «да», «конечно» …).
+- **Free answers** — «Мен Алиев Вали, телефоним 90 123 45 67» fills in name and phone at once; a job in their own
+  words («продавцом хочу») is matched to the list, by its words or, failing that, by the AI.
+- **Recruiter voice** (`hari/voice.py` `interviewer`) — each question is said in HARI's own words with a short
+  reaction to the last answer; no praise, no judgement. Test and work questions stay word for word (the same for
+  everyone); only a short reaction goes before them. Their name and phone are masked before anything leaves.
+- **One follow-up** — a work answer under 25 words may get one clarifying question («мижозга айнан нима
+  дердингиз?»); the report shows it as «Аниқлаштирувчи савол (HARI)».
+- **Work conditions** — asked last: when they can start, which days and hours (spec §7). Shown in the report,
+  not scored.
+
+No AI, over the limit or paused: the same steps go out in the server's own plain wording.
+
 ## How HARI talks
 
 - **Model:** `anthropic/claude-sonnet-5.5` through OpenRouter (it writes far more natural Uzbek than Gemini Flash);

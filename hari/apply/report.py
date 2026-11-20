@@ -63,11 +63,17 @@ def _blocks(app: Application, vacancy_title: str) -> list[str]:
     if app.experience:
         blocks.append(f"Тажриба (номзоднинг ўз баёни, текширилмаган): {app.experience}")
     notes = app.answer_notes or []
-    for i, row in enumerate(app.job or []):
+    scored = [row for row in (app.job or []) if row.get("kind") != "conditions"]
+    for i, row in enumerate(scored):
         lines = [f"{i + 1}-савол: {row.get('q', '')}", f"Жавоб: {row.get('a') or '—'}"]
+        if row.get("fq"):
+            lines += [f"Аниқлаштирувчи савол (HARI): {row['fq']}", f"Жавоб: {row.get('fa') or '—'}"]
         if i < len(notes):
             lines.append(f"Изоҳ: {notes[i]}")
         blocks.append("\n".join(lines))
+    for row in app.job or []:
+        if row.get("kind") == "conditions":
+            blocks.append(f"Иш шартлари (бошлаш санаси, кун ва соатлар): {row.get('a') or '—'}")
     return blocks
 
 

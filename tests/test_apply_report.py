@@ -53,8 +53,8 @@ def test_hint_follows_status():
 
 
 def test_texts_in_three_languages():
-    assert "«ҳа»" in t("uz_cyrl", "consent") and "«ha»" in t("uz_latn", "consent")
-    assert "«да»" in t("ru", "consent")
+    assert "розимисиз?" in t("uz_cyrl", "consent") and "rozimisiz?" in t("uz_latn", "consent")
+    assert "согласны?" in t("ru", "consent") and "интеллект" in t("ru", "consent")
     assert "3" in t("ru", "thanks", days=3) and t("ru", "thanks", days=3) != t("uz_cyrl", "thanks", days=3)
     assert "+998901234567" in t("uz_cyrl", "msg_interview", phone="+998901234567")
     assert t("xx", "ask_name") == t("uz_cyrl", "ask_name")

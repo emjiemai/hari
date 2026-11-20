@@ -16,16 +16,18 @@ from tests.test_bot_flow import no_buttons
 async def test_full_application_reaches_owner_and_hr(h_apply, monkeypatch, session_scope):
     h = h_apply
     use_ai(monkeypatch, {"questions": ["Мижоз «қиммат» деса, нима дейсиз?", "Биринчи ойда нима қиласиз?"]},
+           {"follow_up": None}, {"follow_up": None},  # both answers are clear enough: no clarifying question
            {"criteria": {"work_sample": {"score": 3, "evidence": "Нархни қиймат билан тушунтирди"},
                          "learning": {"score": None, "evidence": ""},
                          "collaboration": {"score": 3, "evidence": "Аниқ ва ҳурматли ёзди"}},
             "recommendation": "ready_for_human_review", "summary": "Аниқ ва амалий жавоблар.",
             "missing": ["Янги маълумотдан кейин ечимни тузатиш мисоли"], "answer_notes": ["n1", "n2"]})
     replies = await h.say(APPLICANT, "/start apply_garmin")
-    assert "Тилни танланг" in replies[0] and "1. Ўзбекча (кирилл)" in replies[0]
+    assert "Қайси тилда гаплашамиз" in replies[0] and "1." not in replies[0]
     replies = await apply_to_the_end(h, link="/start apply_garmin")
     assert "3 иш куни" in replies[0]
-    assert any("Мижоз «қиммат» деса" in m and "4/5" in m for m in h.to(APPLICANT))
+    assert any("Мижоз «қиммат» деса" in m and "4/6" in m for m in h.to(APPLICANT))
+    assert any("қачондан иш бошлай оласиз" in m for m in h.to(APPLICANT))  # work conditions, asked last
     assert any("А) " in m and "ҳарфини ёзинг" in m for m in h.to(APPLICANT))  # logic options are lettered
     for tg in (OWNER, HR):
         report = "\n".join(h.to(tg))
@@ -56,7 +58,7 @@ async def test_latin_choice_by_word(h_apply, session_scope):
     h = h_apply
     await h.say(APPLICANT, "/start apply")
     replies = await h.say(APPLICANT, "lotin")
-    assert "Rozimisiz?" in replies[0]
+    assert "rozimisiz?" in replies[0] and "intellekt" in replies[0]
     async with session_scope() as s:
         assert (await s.execute(select(Application))).scalar_one().language == "uz_latn"
 
@@ -70,9 +72,9 @@ async def test_restart_mid_flow_continues(h_apply):
     await h.say(APPLICANT, "+998 90 123 45 67")
     fresh = ApplyHarness()  # a redeploy: new dispatcher state, same database
     replies = await fresh.say(APPLICANT, "/start apply_garmin")
-    assert "Қайси лавозимга" in replies[-1]
+    assert "Қайси иш сизни" in replies[-1]
     replies = await fresh.say(APPLICANT, "/start")
-    assert "Қайси лавозимга" in replies[-1]
+    assert "Қайси иш сизни" in replies[-1]
 
 
 async def test_wrong_inputs_keep_the_step(h_apply, session_scope):  # Review Focus 1, 3, 4
@@ -83,12 +85,12 @@ async def test_wrong_inputs_keep_the_step(h_apply, session_scope):  # Review Foc
     await h.say(APPLICANT, "ҳа")
     assert "ёзма" in (await h.photo(APPLICANT))[0]
     assert "ёзма" in (await h.voice(APPLICANT))[0]
-    assert "фамилия ва исмни" in (await h.say(APPLICANT, "Вали"))[0]
+    assert "Исм ва фамилиянгизни" in (await h.say(APPLICANT, "Вали"))[0]
     await h.say(APPLICANT, "Алиев Вали")
     assert "ўзингизнинг" in (await h.contact(APPLICANT, "+998901112233", owner=999))[0]
     assert "тушунмадим" in (await h.say(APPLICANT, "қўнғироқ қилинг"))[0]
     replies = await h.contact(APPLICANT, "998901234567")  # a shared contact still works
-    assert "+998901234567" in replies[0] and "Қайси лавозимга" in replies[-1]
+    assert "+998901234567" in replies[0] and "Қайси иш сизни" in replies[-1]
     assert "рўйхатдан рақамни" in (await h.say(APPLICANT, "99"))[0]
     b2b = vacancy_number(h, APPLICANT, "B2B")
     async with session_scope() as s:
@@ -117,7 +119,7 @@ async def test_after_submitting_the_applicant_sees_the_status(h_apply):
     assert "кўриб чиқилмоқда" in replies[0] and "«янги ариза»" in replies[0]
     assert "кўриб чиқилмоқда" in (await h.say(APPLICANT, "/start apply_garmin"))[0]
     replies = await h.say(APPLICANT, "янги ариза")
-    assert "Тилни танланг" in replies[0]
+    assert "Қайси тилда гаплашамиз" in replies[0]
 
 
 async def test_staff_and_strangers(h_apply, session_scope):
@@ -129,7 +131,7 @@ async def test_staff_and_strangers(h_apply, session_scope):
     assert "боғланмаган" in replies[0] and "«ариза»" in replies[0]
     assert "боғланмаган" in (await h.say(777, "салом"))[0]  # no card, no rights
     replies = await h.say(777, "ариза бермоқчиман")
-    assert "Тилни танланг" in replies[0]
+    assert "Қайси тилда гаплашамиз" in replies[0]
     assert "ишламайди" in (await h.say(778, "/start not-an-invite"))[0]  # invite links are untouched
 
 

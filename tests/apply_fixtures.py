@@ -77,7 +77,8 @@ async def apply_to_the_end(h: ApplyHarness, tg: int = APPLICANT, *, link: str = 
     for _ in range(3):
         await h.say(tg, "А")
     await h.say(tg, "Биринчи жавоб")
-    return await h.say(tg, "Иккинчи жавоб")
+    await h.say(tg, "Иккинчи жавоб")
+    return await h.say(tg, "Душанбадан, 9 дан 18 гача")  # when they can start, days and hours
 
 
 def vacancy_number(h: ApplyHarness, tg: int, starts: str) -> str:

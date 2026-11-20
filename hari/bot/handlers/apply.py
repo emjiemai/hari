@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import random
 import re
+from dataclasses import dataclass
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction
@@ -20,8 +21,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from loguru import logger
 
+from hari import egress, retention, voice
 from hari import intent as I
-from hari import retention
 from hari.apply import applications as A
 from hari.apply import evaluate as E
 from hari.apply.logic_bank import by_id, option_labels, question_text
@@ -40,7 +41,8 @@ router = Router(name="apply")
 
 APPLY_ARGS = re.compile(r"^apply(_[A-Za-z0-9_-]{0,40})?$")
 TEXT_STEPS = {"name", "phone", "experience", "job"}
-YES = ("ҳа", "ха", "розиман", "рози", "да", "согласен", "согласна", "ок", "майли", "хоп", "xa", "ha")
+YES = ("ҳа", "ха", "розиман", "рози", "да", "согласен", "согласна", "ок", "майли", "хоп", "xa", "ha", "давом",
+       "албатта", "конечно", "продолж", "хорошо", "ладно", "ҳўп", "бўпти", "бўлди", "go")
 NO = ("йўқ", "йук", "нет", "не", "розимасман", "не согласен", "не согласна")
 SKIP = ("йўқ", "йук", "нет", "ўтказиб", "ўтказ", "пропустить", "пропуск", "резюмем йўқ", "резюме йўқ", "нет резюме")
 AGAIN = ("янги ариза", "бошқа вакансия", "яна ариза", "новая заявка", "другая вакансия", "ещё заявка")
@@ -87,42 +89,82 @@ def logic_choice(text: str, labels: tuple[str, ...]) -> int | None:
     return exact[0] if len(exact) == 1 else None
 
 
+JOB_QUESTIONS = 3  # two work questions and the work-conditions one, before they are written
+
+RUSSIAN = ("здравствуй", "привет", "добрый", "хочу", "работ", "русск", "на русском", "можно", "спасибо")
+
+
+def detect_language(text: str) -> str | None:
+    """The language and script someone wrote in: Latin letters → Uzbek Latin; ў қ ғ ҳ → Uzbek Cyrillic;
+    ы, щ or common Russian words → Russian; other Cyrillic → Uzbek Cyrillic. No letters → None."""
+    letters = [c for c in text or "" if c.isalpha()]
+    if not letters:
+        return None
+    if sum("a" <= c.lower() <= "z" for c in letters) > len(letters) / 2:
+        return "uz_latn"
+    low = text.lower()
+    if any(c in low for c in "ўқғҳ"):
+        return "uz_cyrl"
+    if any(c in low for c in "ыщ") or any(w in low for w in RUSSIAN):
+        return "ru"
+    return "uz_cyrl"
+
+
 def _numbered(items: list[str]) -> str:
     return "\n".join(f"{i}. {label}" for i, label in enumerate(items, start=1))
 
 
 # --------------------------------------------------------------------------- what to say at each step
 
-async def prompt(session, app: Application) -> list[Reply]:  # noqa: ANN001
+@dataclass
+class Ask:
+    """What HARI asks at a step. `how`: "fixed" goes out as written (the language question, the consent,
+    a status); "voice" — the AI says `text` in its own words (hari.voice) and `block` follows unchanged;
+    "lead" — the AI only adds a short reaction to the last answer, and `text` + `block` stay exactly as
+    they are (test and work questions are the same for every applicant)."""
+
+    text: str
+    block: str = ""
+    how: str = "fixed"
+    markup: object | None = None
+
+
+async def prompt(session, app: Application) -> Ask:  # noqa: ANN001
     lang = app.language
+    total = len(app.logic or []) + (len(app.job) if app.job else JOB_QUESTIONS)
     if app.step == "lang":
-        return [(t(lang, "choose_lang"), NO_KEYBOARD)]
+        return Ask(t(lang, "choose_lang"), markup=NO_KEYBOARD)
     if app.step == "consent":
-        return [(t(lang, "consent"), None)]
+        return Ask(t(lang, "consent"))
     if app.step == "name":
-        return [(t(lang, "ask_name"), None)]
+        return Ask(t(lang, "ask_name"), how="voice")
     if app.step == "phone":
-        return [(t(lang, "ask_phone"), None)]
+        return Ask(t(lang, "ask_phone"), how="voice")
     if app.step == "vacancy":
         options = await vacancy_options(session, lang)
         if app.telegram_user_id:
             _shown[app.telegram_user_id] = options
-        titles = [title for _, title in options]
-        return [(t(lang, "ask_vacancy") + "\n" + _numbered(titles), None)]
+        return Ask(t(lang, "ask_vacancy"), _numbered([title for _, title in options]), how="voice")
     if app.step == "experience":
-        return [(t(lang, "ask_experience"), None)]
+        return Ask(t(lang, "ask_experience"), how="voice")
     if app.step == "resume":
-        return [(t(lang, "ask_resume"), None)]
+        return Ask(t(lang, "ask_resume"), how="voice")
     if app.step == "logic":
         index = A.current_logic(app)
         q = by_id(app.logic[index]["qid"])
         options = "\n".join(f"{LETTERS[i]}) {label}" for i, label in enumerate(option_labels(q, lang)))
-        return [(t(lang, "logic_q", n=index + 1, text=question_text(q, lang),
-                   options=cyrillic_to_latin(options) if lang == "uz_latn" else options), None)]
+        return Ask(t(lang, "logic_q", n=index + 1, total=total, text=question_text(q, lang),
+                     options=cyrillic_to_latin(options) if lang == "uz_latn" else options), how="lead")
     if app.step == "job":
         index = A.current_job(app)
-        return [(t(lang, "job_q", n=index + 4, text=app.job[index]["q"]), None)]
-    return [status_reply(app)]
+        row = app.job[index]
+        if A.asking_follow_up(app):
+            return Ask(row["fq"])  # written by the AI for this answer already
+        if row.get("kind") == "conditions":
+            return Ask(row["q"], how="voice")
+        return Ask(t(lang, "job_q", n=len(app.logic or []) + index + 1, total=total, text=row["q"]), how="lead")
+    text, markup = status_reply(app)
+    return Ask(text, markup=markup)
 
 
 # The vacancy list each applicant last saw, so "2" means the second line THEY saw even if a vacancy closed
@@ -164,15 +206,30 @@ async def ensure_questions(bot: Bot, chat_id: int, app_id: str) -> None:
     async with session_scope() as session:
         app = await session.get(Application, app_id)
         if not app.job:
-            app.job, app.job_origin = [{"q": q, "a": None} for q in questions], origin
+            # Spec §7 "иш шартларига мослик": when they can start, which days and hours — asked last, not scored.
+            app.job = [{"q": q, "a": None} for q in questions] + [
+                {"q": t(lang, "conditions_q"), "a": None, "kind": "conditions"}]
+            app.job_origin = origin
 
 
-async def show_step(target: Message, bot: Bot, app_id: str, before: list[Reply] | None = None) -> None:
+async def show_step(target: Message, bot: Bot, app_id: str, before: list[Reply] | None = None,
+                    said: str | None = None) -> None:
+    """Ask what comes next. `said`: what the applicant just wrote, so HARI can react to it like a person.
+    Only after consent does anything of theirs reach the AI, masked and without protected traits."""
     await ensure_questions(bot, target.chat.id, app_id)
     async with session_scope() as session:
         app = await session.get(Application, app_id)
-        replies = (before or []) + await prompt(session, app)
-    await send(target, replies)
+        ask = await prompt(session, app)
+        lang, known = app.language, (app.full_name or "", app.phone or "")
+        consented = app.consent_at is not None
+    text = ask.text
+    if ask.how != "fixed" and consented and not settings.hari_paused:
+        await bot.send_chat_action(target.chat.id, ChatAction.TYPING)
+        heard = egress.outbound(egress.redact_protected(said or ""), known=[k for k in known if k])[:600]
+        text = await voice.interviewer(heard, text if ask.how == "voice" else "", lang, keep=text)
+    if ask.block:
+        text = f"{text}\n{ask.block}"
+    await send(target, (before or []) + [(text, ask.markup)])
 
 
 # --------------------------------------------------------------------------- entry
@@ -255,29 +312,32 @@ async def ask_deletion(message: Message, bot: Bot) -> None:
 
 # --------------------------------------------------------------------------- answers, typed or sent
 
-async def _choice_step(session, app: Application, text: str, now) -> tuple[bool, list[Reply]]:  # noqa: ANN001
+async def _choice_step(session, app: Application, text: str, now,  # noqa: ANN001
+                       vacancy_hint: str | None = None) -> tuple[bool, list[Reply]]:
     """The steps that used to be buttons. (understood, replies to send before the next step)."""
     lang = app.language
     if app.step == "lang":
-        picked = I.choice(text, list(LANG_CHOICES.items()))
+        # "ruscha", "o'zbekcha", "1", or simply whatever they wrote, in the language they wrote it in.
+        picked = I.choice(text, list(LANG_CHOICES.items())) or detect_language(text)
         if picked is None:
-            return False, [(t(lang, "pick_number"), None)]
+            return False, [(t(lang, "ask_language_again"), None)]
         app.language = picked
         A.go(app, "consent", now)
         return True, []
     if app.step == "consent":
-        if _says(text, NO) and not _says(text, ("розиман", "согласен", "согласна")):
+        if _says(text, NO) and not _says(text, ("розиман", "согласен", "согласна", "давом")):
             await session.delete(app)
             return True, [(t(lang, "no_consent"), None)]
-        if _says(text, YES):
+        if _says(text, YES) or I.is_yes(text):
             app.consent_at = now
             A.go(app, "name", now)
             return True, []
         return False, [(t(lang, "yes_or_no"), None)]
     if app.step == "vacancy":
         options = _shown.get(app.telegram_user_id) or await vacancy_options(session, lang)
-        picked = I.choice(text, [(vid, (title,)) for vid, title in options])
-        if picked is None:
+        picked = I.choice(text, [(vid, (title, *[w for w in title.split() if len(w) >= 5]))
+                                 for vid, title in options]) or vacancy_hint
+        if picked is None or picked not in {vid for vid, _ in options}:
             return False, [(t(lang, "pick_number"), None)]
         try:
             await A.choose_vacancy(session, app, None if picked == "general" else picked)
@@ -323,6 +383,8 @@ async def on_message(message: Message, bot: Bot, app_id: str) -> None:
     if again is None:
         await ask_deletion(message, bot)
         return
+    vacancy_hint = await _vacancy_by_ai(app_id, text) if text else None
+    answered: tuple[int, str] | None = None  # a work question just answered: (row, question) — may get a follow-up
     async with session_scope() as session:
         app = await session.get(Application, app_id)
         lang, step, now = app.language, app.step, now_utc()
@@ -331,7 +393,7 @@ async def on_message(message: Message, bot: Bot, app_id: str) -> None:
             if not text:
                 await message.answer(t(lang, "type_please"))
                 return
-            understood, before = await _choice_step(session, app, text, now)
+            understood, before = await _choice_step(session, app, text, now, vacancy_hint)
             if not understood:
                 await send(message, before)
                 return
@@ -357,11 +419,13 @@ async def on_message(message: Message, bot: Bot, app_id: str) -> None:
             await message.answer(t(lang, "type_please"))
             return
         elif step == "name":
-            name = A.clean_name(text)
+            name, phone = A.name_and_phone(text)  # "Мен Алиев Вали, тел 90 123 45 67" gives both
             if name is None:
                 await message.answer(t(lang, "bad_name"))
                 return
             app.full_name = name
+            if phone:
+                app.phone = phone
         elif step == "phone":
             phone = A.clean_phone(text)
             if phone is None:
@@ -371,9 +435,16 @@ async def on_message(message: Message, bot: Bot, app_id: str) -> None:
         elif step == "experience":
             app.experience = A.clip(text)
         elif step == "job":
+            index = A.current_job(app)
+            row = app.job[index] if index is not None else {}
+            if index is not None and row.get("kind") != "conditions" and not A.asking_follow_up(app):
+                answered = (index, row["q"])
             A.answer_job(app, text)
 
-        if step == "name":
+        if step == "name" and app.phone:
+            A.go(app, "vacancy", now)
+            before = [(t(lang, "phone_saved", phone=app.phone), None)]
+        elif step == "name":
             A.go(app, "phone", now)
         elif step == "phone":
             A.go(app, "vacancy", now)
@@ -390,4 +461,27 @@ async def on_message(message: Message, bot: Bot, app_id: str) -> None:
         await message.answer(t(lang, "thanks", days=settings.apply_reply_days))
         await evaluate_and_report(bot, app_id)
         return
-    await show_step(message, bot, app_id, before)
+    if answered is not None:  # a thin answer gets one clarifying question, like an interviewer would ask
+        await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+        async with session_scope() as session:
+            app = await session.get(Application, app_id)
+            known = tuple(k for k in (app.full_name, app.phone) if k)
+        question = await E.follow_up(answered[1], text, lang, known)
+        if question:
+            async with session_scope() as session:
+                A.add_follow_up(await session.get(Application, app_id), answered[0], question)
+    await show_step(message, bot, app_id, before, said=text)
+
+
+async def _vacancy_by_ai(app_id: str, text: str) -> str | None:
+    """At the vacancy step, words the list cannot match ("продавцом хочу") go to the AI with the titles."""
+    async with session_scope() as session:
+        app = await session.get(Application, app_id)
+        if app is None or app.step != "vacancy" or app.consent_at is None:
+            return None
+        options = _shown.get(app.telegram_user_id) or await vacancy_options(session, app.language)
+        lang, known = app.language, tuple(k for k in (app.full_name, app.phone) if k)
+    if I.choice(text, [(vid, (title, *[w for w in title.split() if len(w) >= 5])) for vid, title in options]):
+        return None  # the list already understands it
+    index = await E.pick_vacancy(text, [title for _, title in options], lang, known)
+    return options[index][0] if index is not None else None

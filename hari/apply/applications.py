@@ -80,6 +80,32 @@ def clean_phone(text: str) -> str | None:
     return f"+{digits}"
 
 
+_PHONE_IN_TEXT = re.compile(r"\+?\d[\d\s\-().]{7,18}\d")
+_NAME_LEAD = re.compile(
+    r"^\s*(?:mening\s+ismim|ismim|men|менинг\s+исмим|исмим|мен|меня\s+зовут|я|my\s+name\s+is|i\s+am|i'm)\s*[:,\-]?\s+",
+    re.IGNORECASE)
+_NAME_TAIL = re.compile(r"\s*(?:bo['ʻ’]?laman|бўламан|tel(?:efon)?\w*|тел(?:ефон)?\w*|raqam\w*|рақам\w*|номер\w*)"
+                        r"\s*[:.,]?\s*$", re.IGNORECASE)
+
+
+def name_and_phone(text: str) -> tuple[str | None, str | None]:
+    """A name — and a phone, if they gave one too — from a sentence: "Мен Алиев Вали, тел 90 123 45 67",
+    "Меня зовут Вали Алиев". None for the name when it does not look like one (one word, or a long story)."""
+    phone = None
+    found = _PHONE_IN_TEXT.search(text or "")
+    if found and clean_phone(found.group(0)):
+        phone = clean_phone(found.group(0))
+        text = (text[:found.start()] + " " + text[found.end():])
+    text = _NAME_LEAD.sub("", text or "")
+    text = re.sub(r"[,.;!]+", " ", text)
+    text = _NAME_TAIL.sub("", " ".join(text.split()))
+    text = _NAME_TAIL.sub("", text)
+    words = text.split()
+    if not 2 <= len(words) <= 4:
+        return None, phone
+    return clean_name(" ".join(w[:1].upper() + w[1:] for w in words)), phone
+
+
 def clip(text: str, limit: int = ANSWER_LIMIT) -> str:
     text = (text or "").strip()
     return text if len(text) <= limit else text[:limit - 1] + "…"
@@ -129,8 +155,20 @@ def logic_score(app: Application) -> tuple[int, int]:
     return sum(1 for r in rows if r.get("correct")), len(rows)
 
 
+# A job row: {"q", "a"}; with one follow-up HARI asked when the answer was thin: {"fq", "fa"};
+# the work-conditions question (start date, days, hours) is marked {"kind": "conditions"} and is not scored.
+
+def _waiting(row: dict) -> bool:
+    return row.get("a") is None or (bool(row.get("fq")) and row.get("fa") is None)
+
+
 def current_job(app: Application) -> int | None:
-    return next((i for i, row in enumerate(app.job or []) if row.get("a") is None), None)
+    return next((i for i, row in enumerate(app.job or []) if _waiting(row)), None)
+
+
+def asking_follow_up(app: Application) -> bool:
+    index = current_job(app)
+    return index is not None and app.job[index].get("a") is not None
 
 
 def answer_job(app: Application, text: str) -> bool:
@@ -138,9 +176,18 @@ def answer_job(app: Application, text: str) -> bool:
     if index is None:
         return False
     rows = [dict(r) for r in app.job]
-    rows[index]["a"] = clip(text)
+    rows[index]["fa" if rows[index].get("a") is not None else "a"] = clip(text)
     app.job = rows
     return True
+
+
+def add_follow_up(app: Application, index: int, question: str) -> None:
+    """One clarifying question for a thin answer; never for the conditions question, never twice."""
+    rows = [dict(r) for r in app.job]
+    if rows[index].get("kind") == "conditions" or rows[index].get("fq"):
+        return
+    rows[index]["fq"], rows[index]["fa"] = question, None
+    app.job = rows
 
 
 # --------------------------------------------------------------------------- submitting and deciding
