@@ -342,7 +342,8 @@ async def _answer(session: AsyncSession, emp: Employee, question: str, today: da
     system = with_base(SYSTEM_PROMPT % {"language": LANG_NAMES.get(emp.language, LANG_NAMES["uz_cyrl"])})
     try:
         names = list((await session.execute(select(Employee.full_name))).scalars())
-        reply = await llm.complete_json(system, build_user_message(emp, question, hits, examples, history, names))
+        reply = await llm.complete_json(system, build_user_message(emp, question, hits, examples, history, names),
+                                        temperature=0.5)  # talks like a person; facts are still checked
     except LLMUnavailable:
         talk = small_talk(question)
         if talk:  # "салом", "ишлаяпсанми?" still get a person's answer, not "no approved answer found"

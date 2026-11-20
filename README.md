@@ -93,6 +93,22 @@ backup and restore drill (§23, T29); the 120-request multilingual acceptance se
 the owner panel as a web page (§28 — it is the Telegram digest). English fixed texts (rules fire in English, the
 reply is Uzbek or Russian).
 
+## How HARI talks
+
+- **Model:** `anthropic/claude-sonnet-5.5` through OpenRouter (it writes far more natural Uzbek than Gemini Flash);
+  `google/gemini-3.8-flash`, then `3.7-flash`, take over when it fails. Each question carries the approved
+  examples (about 20–25 thousand tokens), so a question costs roughly 5 cents on Sonnet against about 2 on Flash.
+  To go back: set `LLM_MODEL=google/gemini-3.8-flash` in Render.
+- **Temperature:** 0.5 for answers and 0.7 for rewording (it no longer repeats one stiff phrasing); routing,
+  applicant evaluation and anything judged stays at 0.1.
+- **HARI's own messages in its own words** (`hari/voice.py`): the help reply, the welcome, the morning brief and
+  every «ҳа / йўқ» confirmation are decided by the server and then reworded by the AI to sound like a colleague.
+  Names, codes and «quoted» commands are swapped for markers before the text leaves and put back after, so the
+  AI never sees them and cannot change them. A missing marker or number, «сен», or no AI → the server's own
+  wording goes out.
+- **The real fix is examples from people:** 20–30 genuine short exchanges in how the team writes in Telegram,
+  added to the answer prompt as style examples. The AI cannot be fine-tuned through OpenRouter.
+
 ## HARI runs the day itself
 
 HARI does not wait to be asked (`hari/agenda.py`). From the data it already holds it works out what each person

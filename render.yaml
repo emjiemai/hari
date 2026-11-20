@@ -58,9 +58,9 @@ services:
       - key: KNOWLEDGE_DIR
         value: knowledge/samples  # switch to knowledge/docs when the real documents are in
       - key: LLM_MODEL
-        value: google/gemini-3.8-flash
+        value: anthropic/claude-sonnet-5.5
       - key: LLM_FALLBACK_MODELS
-        value: google/gemini-3.7-flash
+        value: google/gemini-3.8-flash,google/gemini-3.7-flash
       - key: PROACTIVE_DAILY_LIMIT
         value: "2"
       - key: HARI_PAUSED

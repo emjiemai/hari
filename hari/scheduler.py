@@ -33,7 +33,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hari import agenda, budget, digest, integrations, memory, nonresponse, retention
+from hari import agenda, budget, digest, integrations, memory, nonresponse, retention, voice
 from hari.access import is_staff
 from hari.bot import texts as T
 from hari.config import settings
@@ -94,23 +94,42 @@ async def deliver(bot: Bot, msg_id: str) -> bool:
     return outcome == SENT
 
 
-async def morning_briefs(session: AsyncSession, now: datetime) -> list[str]:
+async def draft_briefs(now: datetime) -> list[tuple[str, str, str]]:
     """Each work morning, everyone with something to do hears what it is (hari.agenda): newcomers their
     steps, mentors and managers the results to accept, handlers their open requests, HR and owners the
-    applications waiting. One message a day, on their work days and hours, within the daily limit (A07)."""
-    people = (await session.execute(select(Employee).where(
-        Employee.status == "active", Employee.telegram_user_id.is_not(None)).order_by(Employee.code))).scalars().all()
+    applications waiting. One message a day, on their work days and hours, within the daily limit (A07).
+    Returns (employee id, idempotency key, text) for the ones due now; nothing is queued yet."""
+    drafts: list[tuple[str, str, str]] = []
+    async with session_scope() as session:
+        people = (await session.execute(select(Employee).where(
+            Employee.status == "active", Employee.telegram_user_id.is_not(None)).order_by(Employee.code))).scalars().all()
+        for emp in people:
+            if not is_staff(emp) or not is_work_time(emp, now):
+                continue  # not verified, or outside their hours: wait (A07)
+            key = f"brief:{emp.id}:{today_local(now)}"
+            if (await session.execute(select(OutboundMessage.id).where(OutboundMessage.idempotency_key == key))).first():
+                continue
+            text = await agenda.morning_brief(session, emp, now)
+            if text:
+                drafts.append((emp.id, key, text))
+    return drafts
+
+
+async def reword_briefs(drafts: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """The AI says each brief in its own words (hari.voice); codes, names and commands stay exact.
+    Runs outside any database session: an AI call may take seconds."""
+    if not drafts:
+        return drafts
+    names = await voice.known_names()
+    return [(emp_id, key, await voice.natural(text, names)) for emp_id, key, text in drafts]
+
+
+async def morning_briefs(session: AsyncSession, now: datetime,
+                         drafts: list[tuple[str, str, str]]) -> list[str]:
     queued: list[str] = []
-    for emp in people:
-        if not is_staff(emp) or not is_work_time(emp, now):
-            continue  # not verified, or outside their hours: wait (A07)
-        key = f"brief:{emp.id}:{today_local(now)}"
-        if (await session.execute(select(OutboundMessage.id).where(OutboundMessage.idempotency_key == key))).first():
-            continue
-        text = await agenda.morning_brief(session, emp, now)
-        if not text:
-            continue
-        msg = await queue(session, emp, "brief", key, text, now)
+    for emp_id, key, text in drafts:
+        emp = await session.get(Employee, emp_id)
+        msg = await queue(session, emp, "brief", key, text, now) if emp is not None else None
         if msg:
             queued.append(msg.id)
     return queued
@@ -216,10 +235,11 @@ async def tick(bot: Bot, now: datetime | None = None) -> int:
         await memory.purge_old(session, now)
     if settings.hari_paused:
         return 0  # the kill switch: no proactive message and no automatic change (T23)
+    briefs = await reword_briefs(await draft_briefs(now))
     async with session_scope() as session:
         await activate_started(session, now)
         ids = await pending_retries(session, now)
-        ids += await morning_briefs(session, now)  # before applicants_waiting: it skips what a brief listed
+        ids += await morning_briefs(session, now, briefs)  # before applicants_waiting: it skips what a brief listed
         ids += await applicants_waiting(session, now)
         ids += await nonresponse.sweep(session, now)
         ids += await system_alerts(session, now)

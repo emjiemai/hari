@@ -39,7 +39,8 @@ class FakeLLM:
     def __init__(self, reply=None) -> None:  # noqa: ANN001
         self.reply, self.calls = reply, []
 
-    async def complete_json(self, system: str, user: str, max_tokens: int = 1200) -> LLMReply:
+    async def complete_json(self, system: str, user: str, max_tokens: int = 1200,
+                            temperature: float = 0.1) -> LLMReply:
         self.calls.append((system, user))
         reply = self.reply(user) if callable(self.reply) else self.reply
         if isinstance(reply, Exception):

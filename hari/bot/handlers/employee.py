@@ -14,7 +14,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 from sqlalchemy import select
 
-from hari import agenda
+from hari import agenda, voice
 from hari import cases as C
 from hari import digest, memory, nonresponse
 from hari import intent as I
@@ -527,7 +527,7 @@ async def forget(ctx: Ctx, args: dict) -> None:
 
 
 async def help_(ctx: Ctx, args: dict) -> None:
-    await ctx.say(T.help_text(ctx.emp, ctx.works, ctx.manages))
+    await ctx.say(await voice.natural(T.help_text(ctx.emp, ctx.works, ctx.manages)))
 
 
 # --------------------------------------------------------------------------- questions

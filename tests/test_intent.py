@@ -27,7 +27,8 @@ class Router:
     def __call__(self) -> "Router":
         return self
 
-    async def complete_json(self, system: str, user: str, max_tokens: int = 1200) -> LLMReply:
+    async def complete_json(self, system: str, user: str, max_tokens: int = 1200,
+                            temperature: float = 0.1) -> LLMReply:
         self.prompts.append(system + "\n" + user)
         if not self.replies:
             raise LLMUnavailable("script ended")

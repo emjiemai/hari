@@ -67,7 +67,9 @@ async def ask_confirm(ctx: Ctx, summary: str, action: str, args: dict) -> None:
     """Nothing changes yet: HARI says what it will do and waits for «ҳа»."""
     await ctx.state.set_state(Pending.confirm)
     await ctx.state.update_data(pending={"action": action, "args": args})
-    await ctx.say(T.CONFIRM.format(summary=summary))
+    from hari import voice  # here: voice needs the database, this module is imported early
+
+    await ctx.say(await voice.natural(T.CONFIRM.format(summary=summary), await voice.known_names()))
 
 
 async def ask_pick(ctx: Ctx, question: str, action: str, args: dict, key: str,

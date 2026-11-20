@@ -103,7 +103,7 @@ async def test_wrong_inputs_keep_the_step(h_apply, session_scope):  # Review Foc
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
     assert app.resume_file_id == "document:cv-file" and app.step == "logic" and len(app.logic) == 3
-    assert "ҳарфини" in (await h.say(APPLICANT, "7"))[0]  # options are letters, not numbers
+    assert "ҳарфини" in (await h.say(APPLICANT, "билмадим"))[0]  # neither a letter nor an option: asked again
     await h.say(APPLICANT, "б")
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()

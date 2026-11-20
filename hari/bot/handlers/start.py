@@ -7,7 +7,7 @@ from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from hari import agenda
+from hari import agenda, voice
 from hari.bot import texts as T
 from hari.bot.common import staff_by_tg
 from hari.bot.handlers.people import report_join, report_stranger
@@ -27,7 +27,9 @@ async def _welcome(message: Message, emp: Employee) -> None:
         manager = (await session.get(Employee, emp.manager_id)).full_name if emp.manager_id else None
         mentor = (await session.get(Employee, emp.mentor_id)).full_name if emp.mentor_id else None
     # NO_KEYBOARD takes the old menu keyboard off the phone, if an earlier version left one there.
-    await message.answer(T.say(emp, T.welcome(emp, manager, mentor)), reply_markup=NO_KEYBOARD)
+    text = await voice.natural(T.welcome(emp, manager, mentor), [emp.full_name, *emp.full_name.split(), manager or "",
+                                                                 mentor or ""])
+    await message.answer(T.say(emp, text), reply_markup=NO_KEYBOARD)
 
 
 @router.message(CommandStart(deep_link=True))

@@ -15,7 +15,8 @@ class FakeLLM:
     def __init__(self, reply: dict | None = None, fail: bool = False) -> None:
         self.reply, self.fail, self.calls = reply, fail, []
 
-    async def complete_json(self, system: str, user: str, max_tokens: int = 1200) -> LLMReply:
+    async def complete_json(self, system: str, user: str, max_tokens: int = 1200,
+                            temperature: float = 0.1) -> LLMReply:
         self.calls.append((system, user))
         if self.fail:
             raise LLMUnavailable("down")

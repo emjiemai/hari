@@ -36,7 +36,9 @@ class LLMClient:
         self.models = models or settings.llm_models
         self._transport = transport
 
-    async def complete_json(self, system: str, user: str, max_tokens: int = 1200) -> LLMReply:
+    async def complete_json(self, system: str, user: str, max_tokens: int = 1200,
+                            temperature: float = 0.1) -> LLMReply:
+        """`temperature`: 0.1 where the reply must be exact (routing, judging); higher where it talks."""
         if not self.api_key.strip():
             raise LLMUnavailable("no API key")
         last_error = "unknown"
@@ -55,7 +57,7 @@ class LLMClient:
                             "model": model,
                             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                             "response_format": {"type": "json_object"},
-                            "temperature": 0.1,
+                            "temperature": temperature,
                             "max_tokens": max_tokens,
                             # Only providers that do not keep or train on the prompts (OpenRouter routing).
                             **({"provider": {"data_collection": "deny"}} if settings.llm_deny_data_collection else {}),

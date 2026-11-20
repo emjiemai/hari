@@ -31,7 +31,8 @@ class ScriptedLLM:
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         pass
 
-    async def complete_json(self, system: str, user: str, max_tokens: int = 1200) -> LLMReply:
+    async def complete_json(self, system: str, user: str, max_tokens: int = 1200,
+                            temperature: float = 0.1) -> LLMReply:
         ScriptedLLM.calls.append(user)
         question = re.search(r"<<<QUESTION\n(.*)\nQUESTION>>>", user, re.DOTALL).group(1)
         example = json.loads(re.search(r"<<<EXAMPLES\n(.*)\nEXAMPLES>>>", user, re.DOTALL).group(1))

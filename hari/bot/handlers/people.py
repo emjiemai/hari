@@ -20,7 +20,7 @@ from aiogram.types import Message, User
 from loguru import logger
 from sqlalchemy import select
 
-from hari import approvals, audit, owners
+from hari import approvals, audit, owners, voice
 from hari import intent as I
 from hari import onboarding as O
 from hari.access import can_manage_employees, is_staff
@@ -505,7 +505,8 @@ async def add_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
         await O.create_plan(session, emp, today, actor_id=actor.id)
         await session.flush()
         card = await profile_card(session, emp)
-        welcome = T.say(emp, T.welcome(emp, None, None))
+        welcome = T.welcome(emp, None, None)
+    welcome = T.say(emp, await voice.natural(welcome, [emp.full_name, *emp.full_name.split()]))
     await message.answer(T.say(actor, f"Ходим қўшилди.\n\n{card}\n\n{card_hint(actor, emp)}"))
     try:
         await bot.send_message(tg, welcome, reply_markup=NO_KEYBOARD)

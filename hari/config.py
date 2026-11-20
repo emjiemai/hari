@@ -19,8 +19,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./hari.db"
 
     openrouter_api_key: SecretStr = SecretStr("")
-    llm_model: str = "google/gemini-3.8-flash"
-    llm_fallback_models: str = "google/gemini-3.7-flash"
+    # Claude writes far more natural Uzbek than Flash; Flash stays as the fallback when it fails.
+    llm_model: str = "anthropic/claude-sonnet-5.5"
+    llm_fallback_models: str = "google/gemini-3.8-flash,google/gemini-3.7-flash"
     llm_timeout_seconds: float = 40.0
 
     knowledge_dir: str = "knowledge/samples"
