@@ -581,7 +581,9 @@ async def test_t28_small_groups_are_not_broken_out(session_scope, staff):
         await C.open_case(s, me, "complaint", "шикоят матни сир")
         text = await digest.weekly_text(s, datetime.now(timezone.utc) + timedelta(minutes=1))
     assert "Кичик бўлим" not in text and "Якка Ходим" not in text and "шикоят матни" not in text
-    assert "Мурожаатлар: 2 та очилди" in text and "N/A" in text and "номаълум" in text
+    assert "Мурожаатлар: 2 та келди" in text
+    # nothing was due yet: said in words, never as a made-up 0% or 100% (the N/A rule)
+    assert "биринчи жавоб муддати келмаган" in text and "0%" not in text and "100%" not in text
 
 
 def test_t29_restore_from_backup_is_an_infrastructure_drill():

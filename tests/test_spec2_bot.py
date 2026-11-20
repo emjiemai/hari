@@ -253,8 +253,8 @@ async def test_digest_is_at_most_five_lines_once_and_hides_an_owners_own_matter(
     mine = next(t for chat, t in bot.sent if chat == OWNER)
     other = next(t for chat, t in bot.sent if chat == BOSS)
     assert "Биринчи эга ҳақида" not in mine and "Биринчи эга ҳақида" in other
-    assert mine.count("Таъсир:") == 5 and "Факт 0" in mine and "Факт 5" not in mine
-    assert "Тизим ҳолати:" in mine and "LLM_DAILY_CALL_LIMIT" in mine  # undecided settings are shown, not guessed
+    assert mine.count("кимда:") == 5 and "Факт 0" in mine and "Факт 5" not in mine
+    assert "AI учун кунлик сарф чегараси қўйилмаган" in mine and "LLM_DAILY" not in mine  # shown in words, not guessed
     await scheduler.tick(bot, at_tashkent(date(2026, 11, 10), 17, 30))  # what did not fit comes the next day
     tomorrow = [t for chat, t in bot.sent if chat == OWNER][-1]
     assert "Факт 5" in tomorrow and "Факт 0" not in tomorrow
@@ -276,7 +276,11 @@ async def test_weekly_report_goes_to_hr_and_owner_on_friday_afternoon(session_sc
     await scheduler.tick(bot, at_tashkent(date(2026, 11, 13), 16, 0))
     await scheduler.tick(bot, at_tashkent(date(2026, 11, 13), 16, 30))
     assert sorted(chat for chat, _ in bot.sent) == [OWNER, HR]
-    assert "ҳафталик ҳисобот" in bot.sent[0][1] and "шахсий баҳоси эмас" in bot.sent[0][1]
+    assert "ҳафталик ҳисобот" in bot.sent[0][1].lower() and "шахсий баҳоси эмас" in bot.sent[0][1]
+    owner = next(text for chat, text in bot.sent if chat == OWNER)
+    hr = next(text for chat, text in bot.sent if chat == HR)
+    assert "INDEPENDENT_COMPLAINT_RECIPIENT" not in owner and "шикоятларни ким кўриши" in owner  # said in words
+    assert "ҳал қилишингиз керак" not in hr  # settings only to the owner, who can change them
 
 
 # --------------------------------------------------------------------------- registry, schema, budget, modes
