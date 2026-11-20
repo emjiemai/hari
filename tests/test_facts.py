@@ -56,3 +56,26 @@ async def test_how_many_people_is_answered_from_the_database(session_scope, staf
     assert result.source.startswith("Манба: HARI маълумотлар базаси")
     prompt = llm.calls[0][1]
     assert '"in_database": 4' in prompt and "Кадрова" not in prompt and "Аълоев" not in prompt
+
+
+async def test_only_hr_and_owners_are_told_how_to_add_or_list_people(session_scope, staff):
+    from hari.answer import abilities
+
+    owner_id, hr_id, emp_id = await team(session_scope, staff)
+    async with session_scope() as s:
+        owner, hr, emp = [await s.get(Employee, i) for i in (owner_id, hr_id, emp_id)]
+    as_text = {who: " ".join(abilities(p)) for who, p in (("owner", owner), ("hr", hr), ("emp", emp))}
+    assert "«янги ходим»" in as_text["owner"] and "«ходимлар»" in as_text["hr"] and "ролини" in as_text["owner"]
+    assert "ролини" not in as_text["hr"]
+    assert "«янги ходим»" not in as_text["emp"] and "«ходимлар»" not in as_text["emp"]
+
+
+async def test_an_employee_sees_no_list_no_card_and_no_company_numbers(session_scope, staff):
+    from tests.test_bot_flow import Harness
+
+    await team(session_scope, staff)
+    h = Harness()
+    for text in ("ходимлар", "/xodimlar", "E-0001", "E-0002 профили", "янги ходим", "аризалар"):
+        assert (await h.say(13, text)) == ["Бу амал учун ҳуқуқингиз йўқ."], text
+    staff_list = (await h.say(12, "ходимлар"))[0]  # HR does see it
+    assert "Аълоев Анвар" in staff_list and "Эгаев Улуғ" in staff_list
