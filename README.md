@@ -106,6 +106,13 @@ reply is Uzbek or Russian).
   Names, codes and «quoted» commands are swapped for markers before the text leaves and put back after, so the
   AI never sees them and cannot change them. A missing marker or number, «сен», or no AI → the server's own
   wording goes out.
+- **Numbers from HARI's own data** (`hari/facts.py`): every answer also gets live counts — for HR and owners:
+  people in the database, linked to Telegram, by status/role/department, onboarding plans, open and overdue
+  requests, applications, vacancies; for everyone: their own progress and open requests. Counts only, never a
+  name, and only requests the person may see. "Нечта одам базада бор?" is answered from them; asked for the
+  source, HARI says «HARI маълумотлар базаси».
+- **Not knowing, said like a person:** "Буни аниқ билмайман, тахмин қилиб айтгим келмаяпти. HR'дан сўраб
+  берайми?" instead of "тасдиқланган жавоб топилмади".
 - **The real fix is examples from people:** 20–30 genuine short exchanges in how the team writes in Telegram,
   added to the answer prompt as style examples. The AI cannot be fine-tuned through OpenRouter.
 

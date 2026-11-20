@@ -51,7 +51,8 @@ class Action:
 
 ACTIONS: dict[str, Action] = {a.name: a for a in [
     Action("question", "all", "a question, a greeting, something they tell HARI, anything about company rules, "
-           "or anything that is not another action"),
+           "a question about numbers (how many people, requests, applications…), or anything that is not "
+           "another action"),
     Action("help", "all", "what HARI can do / how to use it"),
     Action("source", "all", "where the information in HARI's last answer came from: which document or rule"),
     Action("plan", "all", "show my onboarding plan and today's open steps"),

@@ -148,7 +148,7 @@ async def test_full_onboarding_journey(h):
 
     # a question HARI has no source for: no guessing, offers a person
     replies = await h.say(NEW, "Офисда автомобиль парковкаси борми?")
-    assert "тасдиқланган жавоб топилмади" in replies[0] and "«ҳа» деб ёзинг" in replies[0]
+    assert "аниқ билмайман" in replies[0] and replies[0].count("«ҳа»") == 1  # said once, in its own words
     replies = await h.say(NEW, "ҳа")
     assert "Мурожаат қабул қилинди: HR-" in replies[-1]
     number = re.search(r"HR-\d{4}-\d{2}-\d{4}", replies[-1]).group(0)
