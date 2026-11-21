@@ -82,7 +82,7 @@ def decide(facts: Facts, thresholds: tuple[int, int, int] | None = None) -> Deci
 
 def case_title(case: HRCase) -> str:
     """What a manager may see about someone else's waiting case: a sensitive one shows its number only."""
-    return f"{case.number} ({case.title})" if case.privacy != "sensitive" else f"{case.number} (нозик мурожаат)"
+    return f"«{case.title}» мурожаати" if case.privacy != "sensitive" else "нозик мурожаат"
 
 
 async def track(session: AsyncSession, employee: Employee, kind: str, ref_id: str, title: str, delivered: bool,

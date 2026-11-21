@@ -3,6 +3,7 @@ role, the next step after something is done, and the first steps the moment a ne
 
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 
 import pytest
@@ -55,13 +56,15 @@ async def test_each_person_hears_what_they_should_do_this_morning(team):
     assert "«1 ни ўқидим»" in newcomer and "Мураббийингиз билан танишув" not in newcomer  # sent: not theirs now
 
     mentor = got[MENTOR]
-    assert "S1. Янгиев Ботир — «Мураббийингиз билан танишув»" in mentor and "«S1 ни қабул қил»" in mentor
+    assert "Янгиев Ботир — «Мураббийингиз билан танишув»" in mentor and "«Ботирникини қабул қил»" in mentor
 
     hr = got[HR]
-    assert f"{team} — Маълумотнома керак" in hr and f"«{team} га жавоб: …»" in hr
-    assert "A-2026-11-0001 — Алиев Вали" in hr and "«A-2026-11-0001 ни кўрсат»" in hr
+    assert "Янгиев Ботир — Маълумотнома керак" in hr and "«Ботирга жавоб: …»" in hr
+    assert "Алиев Вали" in hr and "«Валининг аризасини кўрсат»" in hr and "«ҳаммасини рад эт»" in hr
 
-    assert "A-2026-11-0001" in got[OWNER] and team not in got[OWNER]  # the owner is not the case's handler
+    assert "Алиев Вали" in got[OWNER] and "Маълумотнома" not in got[OWNER]  # the owner is not the case's handler
+    for text in got.values():  # people, not codes
+        assert not re.search(r"HR-\d{4}|A-\d{4}|E-\d{4}|S\d", text), text
     assert IDLE not in got  # nothing to do: no message at all
     assert not any("сизни кутяпти" in text for _, text in bot.sent)  # the brief already listed the application
 
@@ -81,7 +84,7 @@ async def test_no_brief_in_the_afternoon_and_nothing_from_today(team, session_sc
 
 async def test_mentor_writes_s1_and_the_newcomer_hears_the_next_step(team, session_scope):
     h = Harness()
-    replies = await h.say(MENTOR, "S1 ни қабул қил")
+    replies = await h.say(MENTOR, "Ботирникини қабул қил")
     assert "Тасдиқлайсизми?" in replies[0] and "Мураббийингиз билан танишув" in replies[0]
     await h.say(MENTOR, "ҳа")
     told = h.to(NEW)[-1]

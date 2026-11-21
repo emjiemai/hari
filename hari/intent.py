@@ -83,11 +83,11 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
     Action("new_employee", "hr", "create a new employee card (HARI asks the fields one by one)"),
     Action("staff_list", "hr", "the list of employees"),
     Action("employee_profile", "hr", "show an employee's card", '{"who": employee code}'),
-    Action("employee_edit", "hr", "change an employee's position or department",
-           '{"who": employee code, "field": "position"|"department", "value": the new value, copied, or null}'),
+    Action("employee_edit", "hr", "change an employee's full name, position or department",
+           '{"who": employee code, "field": "name"|"position"|"department", "value": the new value, copied, or null}'),
     Action("reinvite", "hr", "a new one-time invite link for an employee", '{"who": employee code}'),
-    Action("add_person", "hr", "make someone who opened HARI without a card an employee, by their Telegram ID",
-           '{"tg": the Telegram ID number}'),
+    Action("add_person", "hr", "make someone who opened HARI without a card an employee (by their name or "
+           "Telegram ID)", '{"tg": the Telegram ID number, or null when they are named}'),
     Action("applications", "hr", "job applications waiting for a decision"),
     Action("app_show", "hr", "show a job application report", '{"number": "A-YYYY-MM-NNNN"}'),
     Action("app_interview", "hr", "invite an applicant to an interview", '{"number": application number}'),
@@ -98,6 +98,10 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
            '{"number": application number, "score": 0-4 or null}'),
     Action("app_purge", "hr", "delete an applicant's personal data (they asked for it)", '{"number": application number}'),
     Action("app_hold", "hr", "put a legal hold on an applicant's data", '{"number": application number}'),
+    Action("close_all", "work", "do it for ALL of them at once: reject every job application waiting for a decision "
+           "(HR and owners), and/or answer and close every HR request waiting for me",
+           '{"apps": true if applications are meant, "cases": true if HR requests are meant, '
+           '"text": the reason or answer, copied word for word, or null}'),
     Action("role_change", "owner", "change an employee's role in HARI",
            '{"who": employee code, "role": one of ' + "|".join(ROLES) + "}"),
 ]}
@@ -301,6 +305,50 @@ _ACCEPT = {_norm(w) for w in ("қабул", "қабул қилдим", "қабу
                               "принято", "принять")}
 
 
+def _by_name(raw: str, words: str) -> Intent | None:
+    """Commands that name a person instead of a code («Валини рад эт: …», «Анварга жавоб: …»): likely
+    readings, used when the AI cannot be asked; the handler finds the person by the name in the message."""
+    def kw(action: str, args: dict) -> Intent:
+        return Intent(action, args, "keyword")
+
+    if _has(words, "ходим қилиб", "ходимга қўш", "добавь сотрудник"):
+        return kw("add_person", {"tg": None})
+    if _has(words, "жавоб", "ответ") and ":" in raw:
+        return kw("case_answer", {"number": None, "text": after_colon(raw), "close": _close_flag(words)})
+    if words.endswith("олдим") or words.endswith("кўряпман"):
+        return kw("case_take", {"number": None})
+    if _has(words, "рад эт", "рад қил", "отказ"):
+        return kw("app_reject", {"number": None, "basis": after_colon(raw)})
+    if _has(words, "баҳо", "балл", "оценк"):
+        digits = re.findall(r"(?<!\d)([0-4])(?!\d)", raw)
+        return kw("app_score", {"number": None, "score": int(digits[-1]) if digits else None})
+    if _has(words, "суҳбатга", "собеседован"):
+        return kw("app_interview", {"number": None})
+    if _has(words, "ишга ол", "ишга қабул", "нанять"):
+        return kw("app_hire", {"number": None})
+    if _has(words, "маълумотини ўчир", "удали данные"):
+        return kw("app_purge", {"number": None})
+    if _has(words, "legal hold", "холд"):
+        return kw("app_hold", {"number": None})
+    if _has(words, "аризасини", "заявку"):
+        return kw("app_show", {"number": None})
+    for stem, which in (("лавозим", "position"), ("бўлим", "department"), ("исми", "name")):
+        if _has(words, stem) and ":" in raw:
+            return kw("employee_edit", {"who": None, "field": which, "value": after_colon(raw)})
+    if _has(words, "ҳавола", "ссылк"):
+        return kw("reinvite", {"who": None})
+    role = role_in(raw)
+    if role and _has(words, "қил", "сделай", "ролини", "роль"):
+        return kw("role_change", {"who": None, "role": role})
+    if _has(words, "никини қабул", "натижасини қабул", "қабул қил"):
+        return kw("step_accept", {"item": None})
+    if _has(words, "никини қайтар", "натижасини қайтар"):
+        return kw("step_return", {"item": None, "reason": after_colon(raw)})
+    if _has(words, "профил", "карточка"):
+        return kw("employee_profile", {"who": None})
+    return None
+
+
 def _with_reference(raw: str, words: str) -> Intent | None:
     """Short commands built around a number, a code or a Telegram ID, and accept / return."""
     case, app, code = case_number(raw), app_number(raw), employee_code(raw)
@@ -340,6 +388,14 @@ def _with_reference(raw: str, words: str) -> Intent | None:
         tg = telegram_id(raw)
         if tg and _has(words, "ходим қилиб", "қўш", "добав"):
             return Intent("add_person", {"tg": tg})
+    if _has(words, "ҳаммаси", "барчаси", "ҳаммасини", "барчасини", "все", "всех") and not (case or app or code):
+        apps = _has(words, "рад", "отклон", "бекор")
+        cases = _has(words, "ёп", "закр", "бекор")
+        if apps or cases:  # «ҳаммасини рад эт», «ҳаммасини ёп», «ҳаммасини бекор қил»
+            return Intent("close_all", {"apps": apps, "cases": cases, "text": after_colon(raw)})
+    named = None if (case or app or code) else _by_name(raw, words)
+    if named is not None:
+        return named
     step_ref = STEP_REF_RE.search(raw)
     if step_ref and not (case or app or code):  # «S1 ни қабул қил» from the work queue or the morning brief
         item = f"S{step_ref.group(1)}"

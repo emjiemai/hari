@@ -32,13 +32,14 @@ async def test_owner_gets_the_full_card_when_someone_joins_and_sets_the_position
         token = await make_invite(s, emp, created_by=None)
     await h.say(777, f"/start {token}")
     report = h.to(OWNER)[-1]
-    for part in ("Янги ходим HARI'га қўшилди", "Янгиев Ботир", f"ID: {emp.code}", "Telegram ID: 777",
+    for part in ("Янги ходим HARI'га қўшилди", "Янгиев Ботир", "Telegram: уланган",
                  "Лавозим: Сотувчи", "Бўлим: Garmin сотув", "Роль: Ходим",
-                 f"«{emp.code} лавозими: …»", f"«{emp.code} ролини hr қил»"):
+                 "«Ботирнинг лавозими: …»", "«Ботирни HR қил»"):
         assert part in report, part
+    assert emp.code not in report and "777" not in report  # no codes or Telegram numbers
     assert not any("қўшилди" in t for t in h.to(HR))  # the report goes to owners
 
-    replies = await h.say(OWNER, f"{emp.code} лавозими: Катта сотувчи")
+    replies = await h.say(OWNER, "Ботирнинг лавозими: Катта сотувчи")
     assert "Тасдиқлайсизми?" in replies[0] and "«Сотувчи» → «Катта сотувчи»" in replies[0]
     replies = await h.say(OWNER, "ҳа")
     assert "«Сотувчи» → «Катта сотувчи»" in replies[0] and "Лавозим: Катта сотувчи" in replies[0]
@@ -51,12 +52,12 @@ async def test_owner_gets_the_full_card_when_someone_joins_and_sets_the_position
 async def test_someone_without_a_card_is_reported_once_and_the_owner_adds_them(h, session_scope):
     await h.say(STRANGER, "/start")
     report = h.to(OWNER)[-1]
-    assert "профили йўқ одам" in report and f"Telegram ID: {STRANGER}" in report and "u504" in report
-    assert f"«{STRANGER} ни ходим қилиб қўш»" in report
+    assert "профили йўқ одам" in report and "u504" in report and "«u504ни ходим қилиб қўш»" in report
+    assert "Telegram ID" not in report  # added by name, no Telegram number shown
     await h.say(STRANGER, "/start")
     assert sum("профили йўқ" in t for t in h.to(OWNER)) == 1  # once per account, not on every /start
 
-    await h.say(OWNER, f"{STRANGER} ни ходим қилиб қўш")
+    await h.say(OWNER, "ходим қилиб қўш")  # the one person waiting: found without a number
     await h.say(OWNER, "Омборчи")  # 1/4 position
     await h.say(OWNER, "Омборов Жасур")  # 2/4 name
     await h.say(OWNER, "Омбор")  # 3/4 department, typed
@@ -128,7 +129,7 @@ async def test_hr_edits_department_and_employees_see_nothing(h):
 
 async def test_staff_list_says_what_to_write(h):
     replies = await h.say(OWNER, "ходимлар")
-    assert "«E-0003 профили»" in replies[0]
+    assert "профили»" in replies[0] and "E-000" not in replies[0]
 
 
 # --------------------------------------------------------------------------- no Menu button
@@ -161,6 +162,6 @@ async def test_the_menu_button_is_removed_for_everyone(h):
 
 async def test_slash_commands_still_work_when_typed(h):
     assert "мослашув режаси бириктирилмаган" in (await h.say(MENTOR, "/reja"))[0]
-    assert "ID: E-0003" in (await h.say(MENTOR, "/profilim"))[0]
+    assert "Устозов Анвар" in (await h.say(MENTOR, "/profilim"))[0]
     assert "Қандай мурожаат?" in (await h.say(MENTOR, "/murojaat"))[0]
     assert (await h.say(HR, "/navbat"))[0] == "Иш навбатингиз бўш."

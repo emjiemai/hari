@@ -28,10 +28,10 @@ from hari.bot.context import Ctx, ask_confirm, ask_pick, in_their_script
 from hari.bot.notifications import acceptor_label, tell_case_handler, tell_step_acceptor
 from hari.bot.ui import notify
 from hari.config import settings
-from hari.db.models import Employee, KnowledgeChunk, KnowledgeDocument, OnboardingStep
+from hari.db.models import Employee, KnowledgeChunk, KnowledgeDocument, OnboardingStep, as_utc
 from hari.db.session import session_scope
 from hari.translit import normalize
-from hari.worktime import fmt, now_utc, today_local, work_days_between
+from hari.worktime import fmt, local, now_utc, today_local, work_days_between
 
 router = Router(name="employee")
 
@@ -399,10 +399,10 @@ async def open_and_tell(message: Message, bot: Bot, telegram_user_id: int, case_
             else:  # nobody holds the role: someone allowed must still see it, and the owner's digest lists it
                 for person in await _any_hr(session):
                     if C.can_handle_case(person, None, case.about_employee_id, case.about_role):
-                        await notify(bot, person, f"⚠️ {case.number} учун масъул топилмади. "
-                                                  f"Кўриш учун «{case.number}» деб ёзинг.")
+                        await notify(bot, person, f"⚠️ {emp.full_name}нинг «{case.title}» мурожаати учун масъул "
+                                                  "топилмади. Кўриш учун «иш навбати» деб ёзинг.")
                 await digest.add(session, f"unassigned:{case.id}", "unassigned", priority=20,
-                                 fact=f"{case.number} мурожаати учун масъул топилмади.",
+                                 fact=f"«{case.title}» мурожаати учун масъул топилмади.",
                                  impact="Мурожаат эгасиз қолди: биринчи жавоб муддати ўтиши мумкин.",
                                  responsible="тайинланмаган", due=fmt(case.first_response_due),
                                  about_employee_id=case.about_employee_id, about_role=case.about_role)
@@ -412,7 +412,7 @@ async def open_and_tell(message: Message, bot: Bot, telegram_user_id: int, case_
     if quiet:
         return
     who = f"{assignee.full_name} ({assignee.position})" if assignee else T.CASE_UNASSIGNED
-    text = T.CASE_OPENED.format(number=case.number, label=case.title, who=who, due=fmt(case.first_response_due))
+    text = T.CASE_OPENED.format(label=case.title, who=who, due=fmt(case.first_response_due))
     if (about_role or (about is not None and about.role in ("hr", "owner"))) and independent is None:
         text += "\n\n" + T.COMPLAINT_NO_INDEPENDENT
     await message.answer(in_their_script(emp, message.text, text))
@@ -448,7 +448,7 @@ async def my_cases(ctx: Ctx, args: dict) -> None:
         return
     lines = ["Мурожаатларингиз:"]
     for c in rows:
-        lines.append(f"\n{c.number} — {c.title}\nҲолат: {STATUS_WORDS.get(c.status, c.status)}")
+        lines.append(f"\n{c.title} ({local(as_utc(c.created_at)):%d.%m})\nҲолат: {STATUS_WORDS.get(c.status, c.status)}")
         if c.decision:
             lines.append(f"Жавоб: {c.decision}")
     await ctx.say("\n".join(lines))
@@ -469,9 +469,9 @@ async def case_show(ctx: Ctx, args: dict) -> None:
             about = await session.get(Employee, case.about_employee_id) if case.about_employee_id else None
             text = (f"{case_card(case, requester, about)}\nҲолат: {STATUS_WORDS.get(case.status, case.status)}"
                     + (f"\nЖавоб: {case.decision}" if case.decision else "")
-                    + f"\n\nЖавоб бериш: «{case.number} га жавоб: …»")
+                    + "\n\nЖавоб бериш: «жавоб: …»")
         elif case.requester_id == ctx.emp.id:
-            text = (f"{case.number} — {case.title}\nҲолат: {STATUS_WORDS.get(case.status, case.status)}"
+            text = (f"{case.title}\nҲолат: {STATUS_WORDS.get(case.status, case.status)}"
                     + (f"\nЖавоб: {case.decision}" if case.decision else ""))
         else:
             text = "Бундай мурожаат топилмади."  # someone else's request looks like a missing one
@@ -493,7 +493,7 @@ async def my_profile(ctx: Ctx, args: dict) -> None:
         mentor = await session.get(Employee, emp.mentor_id) if emp.mentor_id else None
     lang = {"uz_cyrl": "ўзбек (кирилл)", "uz_latn": "ўзбек (лотин)", "ru": "рус"}[emp.language]
     lines = [
-        f"{emp.full_name}", f"ID: {emp.code}", f"Бўлим: {emp.department}", f"Лавозим: {emp.position}",
+        f"{emp.full_name}", f"Бўлим: {emp.department}", f"Лавозим: {emp.position}",
         f"Раҳбар: {manager.full_name if manager else '—'}", f"Мураббий: {mentor.full_name if mentor else '—'}",
         f"Бошлаш санаси: {emp.start_date:%d.%m.%Y}" if emp.start_date else "Бошлаш санаси: —",
         f"Иш вақти: {emp.work_start_hour}:00–{emp.work_end_hour}:00", f"Тил: {lang}", "",

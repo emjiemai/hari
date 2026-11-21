@@ -299,13 +299,13 @@ async def ask_deletion(message: Message, bot: Bot) -> None:
             await message.answer(t(lang, "no_consent"))
             return
         fresh = await retention.request_deletion(session, app)
-        held, number = bool(app.legal_hold), app.number
+        held, number = bool(app.legal_hold), app.full_name or "Бир номзод"
         people = await recipients(session) if fresh else []
     await message.answer(t(lang, "delete_hold" if held else "delete_requested" if fresh else "delete_waiting"))
     from hari.bot.handlers.hiring import deletion_hint  # here: hiring imports the staff handlers
 
     for person in people:
-        await notify(bot, person, f"{number}: номзод шахсий маълумотини ўчиришни сўради."
+        await notify(bot, person, f"{number} шахсий маълумотини ўчиришни сўради."
                      + (" Legal hold ўрнатилган — юрист кўриб чиқиши керак." if held else
                         " " + deletion_hint(number)))
 

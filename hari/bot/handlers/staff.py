@@ -65,6 +65,10 @@ class CaseAnswer(StatesGroup):
     close = State()
 
 
+class CloseAll(StatesGroup):
+    reason = State()
+
+
 def _numbered(items: list[str]) -> str:
     return "\n".join(f"{i}. {label}" for i, label in enumerate(items, start=1))
 
@@ -160,8 +164,8 @@ async def _people_prompt(state: FSMContext, field: str, title: str) -> str:
     async with session_scope() as session:
         people = (await list_staff(session))[:25]
     await state.update_data(**{f"{field}_options": [p.id for p in people]})
-    listing = _numbered([f"{p.full_name} — {p.position} ({p.code})" for p in people])
-    return f"{title} Рақамини, исмини ёки кодини ёзинг; йўқ бўлса — «йўқ»:\n{listing}"
+    listing = _numbered([f"{p.full_name} — {p.position}" for p in people])
+    return f"{title} Рақамини ёки исмини ёзинг; йўқ бўлса — «йўқ»:\n{listing}"
 
 
 async def _person_from_reply(text: str, options: list[str]) -> tuple[bool, str | None]:
@@ -337,7 +341,7 @@ async def ne_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
         sent = await tell_applicant(bot, app, apply_text(app.language, "msg_hire", link=link))
         tail = "Ҳавола номзодга юборилди." if sent else "Ҳавола номзодга юборилмади — уни ўзингиз шахсан беринг."
     await message.answer(
-        f"{head}: {emp.code} — {emp.full_name}.\nМослашув режаси тайёр.\n\n"
+        f"{head}: {emp.full_name}.\nМослашув режаси тайёр.\n\n"
         f"Шахсий ҳавола (бир марталик, {settings.invite_ttl_hours} соат):\n{link}\n\n{tail}"
     )
 
@@ -354,7 +358,7 @@ async def reinvite(ctx: Ctx, args: dict) -> None:
             await ctx.say(T.NOT_ALLOWED)
             return
         token = await make_invite(session, await session.get(Employee, emp.id), created_by=hr.id)
-    await ctx.say(f"Янги ҳавола ({emp.code}, {emp.full_name}). Эскиси ишламайди:\n{invite_link(token)}")
+    await ctx.say(f"{emp.full_name} учун янги ҳавола. Эскиси ишламайди:\n{invite_link(token)}")
 
 
 async def staff_list(ctx: Ctx, args: dict) -> None:
@@ -370,8 +374,10 @@ async def staff_list(ctx: Ctx, args: dict) -> None:
                 done, total = O.progress(plan)
                 prog = f", мослашув {done}/{total}"
             mark = "✅" if p.telegram_user_id else "⏳"
-            lines.append(f"{mark} {p.code} {p.full_name} — {p.position}, {ROLE_LABELS.get(p.role, p.role)}{prog}")
-    lines.append("\nПрофил: «E-0003 профили». Ўзгартириш: «E-0003 лавозими: …». Янги ҳавола: «E-0003 га ҳавола».")
+            lines.append(f"{mark} {p.full_name} — {p.position}, {ROLE_LABELS.get(p.role, p.role)}{prog}")
+    name = agenda.given_name(people[-1].full_name) if people else "исм"
+    lines.append(f"\nБирортасини кўриш: «{name} профили». Ўзгартириш: «{name}нинг лавозими: …». "
+                 f"Янги ҳавола: «{name}га ҳавола».")
     await ctx.say("\n".join(lines)[:4000])
 
 
@@ -384,7 +390,8 @@ async def queue_context(session, me: Employee) -> dict:  # noqa: ANN001
     steps = await queue_steps(session, me)
     cases = await C.open_for_handler(session, me)
     return {"queue_steps": [{"ref": r, "employee": o.code, "step": s.title} for r, s, o in steps],
-            "queue_cases": [{"number": c.number, "type": c.type, "status": c.status} for c in cases]}
+            "queue_cases": [{"number": c.number, "type": c.type, "status": c.status,
+                             "from": (await session.get(Employee, c.requester_id)).code} for c in cases]}
 
 
 async def queue(ctx: Ctx, args: dict) -> None:
@@ -395,16 +402,19 @@ async def queue(ctx: Ctx, args: dict) -> None:
         for c in await C.open_for_handler(session, me):
             requester = await session.get(Employee, c.requester_id)
             about = await session.get(Employee, c.about_employee_id) if c.about_employee_id else None
-            case_cards.append((c, case_card(c, requester, about)))
+            case_cards.append((c, case_card(c, requester, about), requester))
     if not steps and not case_cards:
         await ctx.say("Иш навбатингиз бўш.")
         return
-    for ref, s, owner in steps:
-        await ctx.say(f"{ref}. Мослашув, {owner.full_name}: «{s.title}»\nНатижа: {s.proof_text or '(файл)'}\n\n"
-                      f"Қабул: «{ref} ни қабул қил». Қайтариш: «{ref} ни қайтар: сабаб».")
-    for c, card in case_cards:
+    for _, s, owner in steps:
+        name = agenda.given_name(owner.full_name)
+        await ctx.say(f"Мослашув, {owner.full_name}: «{s.title}»\nНатижа: {s.proof_text or '(файл)'}\n\n"
+                      f"Қабул: «{name}никини қабул қил». Қайтариш: «{name}никини қайтар: сабаб».")
+    for c, card, requester in case_cards:
         status = {"submitted": "янги", "accepted": "кўрилмоқда", "decided": "жавоб берилган, очиқ"}.get(c.status, c.status)
-        await ctx.say(f"{card}\nҲолат: {status}\n\nЖавоб: «{c.number} га жавоб: …». Олдим: «{c.number} ни олдим».")
+        name = agenda.given_name(requester.full_name)
+        await ctx.say(f"{card}\nҲолат: {status}\n\nЖавоб: «{name}га жавоб: …». Кўряпман деб белгилаш: "
+                      f"«{name}никини олдим».")
 
 
 # --------------------------------------------------------------------------- accepting onboarding steps
@@ -523,13 +533,26 @@ async def _pick_case(ctx: Ctx, args: dict, action: str, question: str) -> HRCase
                 await ctx.say("Бундай мурожаат топилмади ёки уни кўриш ҳуқуқингиз йўқ.")
                 return None
             return case
+        people = {c.id: await session.get(Employee, c.requester_id) for c in mine}
+    # "Анварга жавоб: …": the request of the person named in the message
+    named = [c for c in mine if people[c.id] is not None and _names_in(people[c.id].full_name, ctx.text)]
+    if len(named) == 1:
+        return named[0]
     if len(mine) == 1:
         return mine[0]
     if not mine:
         await ctx.say("Сизда очиқ мурожаат йўқ.")
         return None
-    await ask_pick(ctx, question, action, args, "number", [(c.number, f"{c.number} — {c.title}") for c in mine])
+    pool = named or mine
+    await ask_pick(ctx, question, action, args, "number",
+                   [(c.number, f"{people[c.id].full_name if people[c.id] else 'ходим'} — {c.title}") for c in pool])
     return None
+
+
+def _names_in(full_name: str, text: str) -> bool:
+    """A name, or a part of it (4+ letters), appears in what was written — in either script."""
+    words = normalize((text or "").lower())
+    return any(len(w) >= 4 and normalize(w.lower()) in words for w in (full_name or "").split())
 
 
 async def case_take(ctx: Ctx, args: dict) -> None:
@@ -545,8 +568,9 @@ async def case_take(ctx: Ctx, args: dict) -> None:
             await ctx.say(T.NOT_ALLOWED)
             return
         requester = await session.get(Employee, case.requester_id)
-    await ctx.say(f"{case.number}: кўриб чиқаётганингиз қайд этилди. Жавоб: «{case.number} га жавоб: …».")
-    await notify(ctx.bot, requester, f"{case.number}: мурожаатингизни {ctx.emp.full_name} кўриб чиқмоқда.")
+    await ctx.say(f"{requester.full_name}нинг «{case.title}» мурожаатини кўряпсиз деб белгиладим. Жавоб: "
+                  f"«{agenda.given_name(requester.full_name)}га жавоб: …».")
+    await notify(ctx.bot, requester, f"«{case.title}» мурожаатингизни {ctx.emp.full_name} кўриб чиқмоқда.")
 
 
 async def case_answer(ctx: Ctx, args: dict) -> None:
@@ -556,25 +580,25 @@ async def case_answer(ctx: Ctx, args: dict) -> None:
     text, close = args.get("text"), args.get("close")
     if not text:
         await ctx.state.set_state(CaseAnswer.text)
-        await ctx.state.update_data(number=case.number)
-        await ctx.say(f"{case.number}: ходимга юбориладиган жавоб ёки қарорни ёзинг. Асос ва кейинги қадамни ҳам "
+        await ctx.state.update_data(number=case.number, title=case.title)
+        await ctx.say(f"«{case.title}»: ходимга юбориладиган жавоб ёки қарорни ёзинг. Асос ва кейинги қадамни ҳам "
                       "ёзинг. Бекор: «бекор».")
         return
     if close is None:
         await ctx.state.set_state(CaseAnswer.close)
         await ctx.state.update_data(number=case.number, answer=text)
-        await ctx.say(_close_question(case.number, text))
+        await ctx.say(_close_question(case.title, text))
         return
     if not ctx.confirmed:
-        await ask_confirm(ctx, f"{case.number} га жавоб юбораман: «{text}». "
+        await ask_confirm(ctx, f"«{case.title}» мурожаатига жавоб юбораман: «{text}». "
                                + ("Мурожаат ёпилади." if close else "Мурожаат очиқ қолади."),
                           "case_answer", {"number": case.number, "text": text, "close": bool(close)})
         return
     await _send_answer(ctx.message, ctx.bot, ctx.tg, case.number, text, bool(close))
 
 
-def _close_question(number: str, text: str) -> str:
-    return (f"{number} га жавоб: «{text}»\n\nМасала тўлиқ ҳал бўлдими? «ҳа» — юбориб ёпаман, «очиқ» — юбораман, "
+def _close_question(title: str, text: str) -> str:
+    return (f"«{title}» мурожаатига жавоб: «{text}»\n\nМасала тўлиқ ҳал бўлдими? «ҳа» — юбориб ёпаман, «очиқ» — юбораман, "
             "мурожаат очиқ қолади, «бекор» — юбормайман.")
 
 
@@ -586,8 +610,8 @@ async def case_answer_text(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(answer=message.text.strip())
     await state.set_state(CaseAnswer.close)
-    number = (await state.get_data())["number"]
-    await message.answer(_close_question(number, message.text.strip()))
+    case_title = (await state.get_data()).get("title", "")
+    await message.answer(_close_question(case_title, message.text.strip()))
 
 
 @router.message(CaseAnswer.close, F.text)
@@ -622,13 +646,125 @@ async def _send_answer(message: Message, bot: Bot, tg: int, number: str, text: s
             await message.answer(T.NOT_ALLOWED)
             return
         requester = await session.get(Employee, case.requester_id)
-    await message.answer(T.say(me, f"Юборилди. {case.number} — {'ёпилди' if close else 'очиқ қолди'}."))
+    await message.answer(T.say(me, f"Юборилди. «{case.title}» — {'ёпилди' if close else 'очиқ қолди'}."))
     state_text = "Мурожаат ёпилди." if close else "Мурожаат очиқ: кейинги қадам бажарилгач ёпилади."
-    await notify(bot, requester, f"{case.number} — {case.title}\n\nЖавоб ({me.full_name}):\n{case.decision}\n\n"
+    await notify(bot, requester, f"«{case.title}» мурожаатингизга жавоб ({me.full_name}):\n{case.decision}\n\n"
                                  f"{state_text}\nЭътирозингиз бўлса, шу ерга ёзинг.")
 
 
+# --------------------------------------------------------------------------- all at once
+
+async def _all_open(me: Employee, apps: bool, cases: bool) -> tuple[list[str], list[str]]:
+    """(case numbers this person holds, ids of applications waiting for a decision)."""
+    from hari.apply.applications import DECISIONS
+
+    async with session_scope() as session:
+        me = await session.get(Employee, me.id)
+        held = [c.number for c in await C.open_for_handler(session, me)
+                if c.assignee_id == me.id or (c.assignee_id is None and me.role in ("hr", "owner"))] if cases else []
+        waiting = []
+        if apps and can_manage_employees(me):
+            waiting = list((await session.execute(select(Application.id).where(
+                Application.status.in_(DECISIONS["reject"])))).scalars())
+    return held, waiting
+
+
+def _what(n_cases: int, n_apps: int) -> str:
+    parts = []
+    if n_cases:
+        parts.append(f"{n_cases} та мурожаатни жавоб бериб ёпаман")
+    if n_apps:
+        parts.append(f"{n_apps} та аризани рад этаман (номзодларга одатдаги хушмуомала жавоб боради)")
+    return " ва ".join(parts)
+
+
+async def close_all(ctx: Ctx, args: dict) -> None:
+    """«ҳаммасини рад эт / ёп»: every waiting application rejected and every held request closed, with one
+    reason the person writes (a rejection is never recorded without one — spec 2.0 §14)."""
+    if "case_numbers" in args:
+        held, waiting = args["case_numbers"], args["app_ids"]
+    else:
+        held, waiting = await _all_open(ctx.emp, bool(args.get("apps")), bool(args.get("cases")))
+    if not held and not waiting:
+        await ctx.say("Ҳозир ёпадиган ёки рад этадиган ҳеч нарса йўқ.")
+        return
+    text = args.get("text")
+    if not text:
+        await ctx.state.set_state(CloseAll.reason)
+        await ctx.state.update_data(close_all={"case_numbers": held, "app_ids": waiting})
+        uses = []
+        if waiting:
+            uses.append("аризаларда рад этиш асоси бўлиб сақланади")
+        if held:
+            uses.append("мурожаат эгаларига жавоб бўлиб боради")
+        await ctx.say(f"{_what(len(held), len(waiting)).capitalize()}. Битта сабаб ёзинг — у " + " ва ".join(uses)
+                      + ". Ёзсангиз, ҳаммасини бажараман; бекор қилиш: «бекор».")
+        return
+    if not ctx.confirmed:
+        await ask_confirm(ctx, f"{_what(len(held), len(waiting)).capitalize()}. Сабаб: «{text}».", "close_all",
+                          {"case_numbers": held, "app_ids": waiting, "text": text})
+        return
+    await _do_close_all(ctx.message, ctx.bot, ctx.tg, held, waiting, text)
+
+
+@router.message(CloseAll.reason, F.text)
+async def close_all_reason(message: Message, state: FSMContext, bot: Bot) -> None:
+    data = (await state.get_data()).get("close_all") or {}
+    await state.clear()
+    if _cancelled(message) or not message.text.strip():
+        await message.answer(T.CANCELLED)
+        return
+    await _do_close_all(message, bot, message.from_user.id, data.get("case_numbers", []), data.get("app_ids", []),
+                        " ".join(message.text.split()))
+
+
+async def _do_close_all(message: Message, bot: Bot, tg: int, numbers: list[str], app_ids: list[str],
+                        text: str) -> None:
+    from hari.apply import applications as A
+    from hari.apply.texts import t as applicant_text
+
+    closed, rejected, skipped = 0, 0, 0
+    told: list[tuple[Employee, str]] = []
+    to_applicants: list[Application] = []
+    async with session_scope() as session:
+        me = await staff_by_tg(session, tg)
+        if me is None:
+            return
+        for number in numbers:
+            case = await C.get_by_number(session, number)
+            try:
+                await C.answer(session, me, case, text, True)
+            except (C.CaseError, AttributeError):
+                skipped += 1
+                continue
+            closed += 1
+            requester = await session.get(Employee, case.requester_id)
+            told.append((requester, f"«{case.title}» мурожаатингизга жавоб ({me.full_name}):\n{case.decision}\n\n"
+                                    "Мурожаат ёпилди. Эътирозингиз бўлса, шу ерга ёзинг."))
+        if app_ids and can_manage_employees(me):
+            for app_id in app_ids:
+                decision = await A.decide(session, app_id, me, "reject", basis=text)
+                if decision.ok:
+                    rejected += 1
+                    to_applicants.append(await session.get(Application, app_id))
+                else:
+                    skipped += 1
+    for person, note in told:
+        await notify(bot, person, note)
+    for app in to_applicants:
+        await tell_applicant(bot, app, applicant_text(app.language, "msg_reject"))
+    done = []
+    if closed:
+        done.append(f"{closed} та мурожаат ёпилди")
+    if rejected:
+        done.append(f"{rejected} та ариза рад этилди")
+    if skipped:
+        done.append(f"{skipped} таси бу орада бошқа одам томонидан ҳал қилинган экан")
+    await message.answer(T.say(me, (", ".join(done) or "Ҳеч нарса ўзгармади") + "."))
+
+
 ACTIONS = {
+    "close_all": close_all,
     "new_employee": new_employee, "reinvite": reinvite, "staff_list": staff_list, "queue": queue,
     "step_accept": step_accept, "step_return": step_return, "case_take": case_take, "case_answer": case_answer,
 }

@@ -30,7 +30,7 @@ def _site(source: str) -> str | None:
 
 
 def _blocks(app: Application, vacancy_title: str) -> list[str]:
-    head = [f"Янги ариза {app.number or '—'} — {vacancy_title}",
+    head = [f"Янги ариза: {app.full_name or 'номзод'} — {vacancy_title}",
             f"HARI тавсияси: {VERDICTS.get(app.verdict or '', NO_AI)}"]
     if app.reason:
         head.append(f"Асос: {app.reason}")
@@ -92,15 +92,16 @@ def report_parts(app: Application, vacancy_title: str) -> list[str]:
 
 
 def report_hint(app: Application) -> str | None:
-    """What the reader can write about this application (there are no buttons)."""
-    n = app.number
+    """What the reader can write about this application (there are no buttons), by the person's name."""
+    who = (app.full_name or "").split()
+    name = who[1] if len(who) > 1 else (who[0] if who else "номзод")
     lines = []
     if app.status == "submitted":
-        lines.append(f"«{n} ни суҳбатга чақир»")
+        lines.append(f"«{name}ни суҳбатга чақир»")
     if app.status in ("submitted", "interview"):
-        lines += [f"«{n} рад эт: асос»", f"«{n} ни ишга ол»"]
+        lines += [f"«{name}ни рад эт: сабаб»", f"«{name}ни ишга ол»"]
     if app.status == "interview":  # the person who held the interview scores it; HARI never does
-        lines.append(f"«{n} суҳбат баҳоси 0–4»")
+        lines.append(f"«{name}нинг суҳбат баҳоси 3» (0–4)")
     return ("Қарор учун ёзинг: " + ", ".join(lines) + ".") if lines else None
 
 

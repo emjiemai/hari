@@ -23,9 +23,10 @@ from hari.apply.texts import STATUS_LABELS, t
 from hari.apply.vacancies import title_for
 from hari.bot import texts as T
 from hari.bot.common import staff_by_tg
+from hari.agenda import given_name
 from hari.bot.context import Ctx, ask_confirm, ask_pick
 from hari.bot.handlers import staff
-from hari.bot.handlers.staff import _cancelled
+from hari.bot.handlers.staff import _cancelled, _names_in
 from hari.bot.ui import notify
 from hari.db.models import Application, Employee, Vacancy
 from hari.db.session import session_scope
@@ -89,13 +90,18 @@ async def _pick_app(ctx: Ctx, args: dict, action: str, question: str) -> Applica
                 return None
             return app
         waiting = await _waiting(session)
-        labels = [(a.number, f"{a.number} — {a.full_name}, {await vacancy_title(session, a)}") for a in waiting]
+        labels = {a.number: f"{a.full_name}, {await vacancy_title(session, a)}" for a in waiting}
+    # "Валини рад эт": the application of the person named in the message
+    named = [a for a in waiting if a.full_name and _names_in(a.full_name, ctx.text)]
+    if len(named) == 1:
+        return named[0]
     if len(waiting) == 1:
         return waiting[0]
     if not waiting:
         await ctx.say("Ҳозир қарор кутаётган ариза йўқ.")
         return None
-    await ask_pick(ctx, question, action, args, "number", labels)
+    pool = named or waiting
+    await ask_pick(ctx, question, action, args, "number", [(a.number, labels[a.number]) for a in pool])
     return None
 
 
@@ -108,10 +114,12 @@ async def applications(ctx: Ctx, args: dict) -> None:
         lines = ["Қарор кутаётган аризалар:"] if waiting else ["Ҳозир қарор кутаётган ариза йўқ."]
         for a in waiting:
             mark = " — маълумотини ўчиришни сўраган" if a.deletion_requested_at and not a.purged_at else ""
-            lines.append(f"• {a.number} — {a.full_name}, {await vacancy_title(session, a)}: "
-                         f"{STATUS_LABELS.get(a.status, a.status)}{mark}")
+            lines.append(f"• {a.full_name}, {await vacancy_title(session, a)}: "
+                         f"{STATUS_LABELS.get(a.status, a.status).lower()}{mark}")
     if waiting:
-        lines.append("\nҲисобот: «A-… ни кўрсат». Қарор: «A-… ни суҳбатга чақир», «A-… рад эт: асос», «A-… ни ишга ол».")
+        name = given_name(waiting[0].full_name)
+        lines.append(f"\nҲисобот: «{name}нинг аризасини кўрсат». Қарор: «{name}ни суҳбатга чақир», "
+                     f"«… рад эт: сабаб», «… ишга ол». Ҳаммасини бирдан: «ҳаммасини рад эт».")
     await ctx.say("\n".join(lines))
 
 
@@ -131,7 +139,7 @@ async def app_interview(ctx: Ctx, args: dict) -> None:
     if app is None:
         return
     if not ctx.confirmed:
-        await ask_confirm(ctx, f"{app.number} — {app.full_name}: суҳбатга чақираман ва номзодга хабар бераман.",
+        await ask_confirm(ctx, f"{app.full_name}: суҳбатга чақираман ва номзодга хабар бераман.",
                           "app_interview", {"number": app.number})
         return
     async with session_scope() as session:
@@ -142,9 +150,9 @@ async def app_interview(ctx: Ctx, args: dict) -> None:
         await ctx.say(too_late(decision))
         return
     delivered = await tell_applicant(ctx.bot, app, t(app.language, "msg_interview", phone=app.phone))
-    await ctx.say(f"{app.number}: суҳбатга чақирилди."
+    await ctx.say(f"{app.full_name}: суҳбатга чақирилди."
                   + ("" if delivered or not app.telegram_user_id else " Номзодга хабар етмади.")
-                  + f"\nСуҳбатдан кейин баҳо: «{app.number} суҳбат баҳоси 0–4».")
+                  + f"\nСуҳбатдан кейин баҳо: «{given_name(app.full_name)}нинг суҳбат баҳоси 0–4».")
 
 
 async def app_reject(ctx: Ctx, args: dict) -> None:
@@ -160,12 +168,12 @@ async def app_reject(ctx: Ctx, args: dict) -> None:
     if not basis:
         await ctx.state.set_state(RejectBasis.waiting)
         await ctx.state.update_data(app_id=app.id)
-        await ctx.say(f"{app.number}: рад этиш асосини ёзинг — қайси мезон ва қайси далил бўйича. Ёш, жинс, миллат, "
+        await ctx.say(f"{app.full_name}: рад этиш асосини ёзинг — қайси мезон ва қайси далил бўйича. Ёш, жинс, миллат, "
                       "дин, оилавий ҳолат ёки мантиқ машқи балли асос бўла олмайди. Ёзувингиз аризада сақланади. "
                       "Бекор: «бекор».")
         return
     if not ctx.confirmed:
-        await ask_confirm(ctx, f"{app.number} — {app.full_name}: рад этаман. Асос: «{basis}». Номзодга хабар бораман.",
+        await ask_confirm(ctx, f"{app.full_name}: рад этаман. Асос: «{basis}». Номзодга хабар бораман.",
                           "app_reject", {"number": app.number, "basis": basis})
         return
     await _reject(ctx.message, ctx.bot, ctx.tg, app.id, basis)
@@ -193,7 +201,7 @@ async def _reject(message: Message, bot: Bot, tg: int, app_id: str, basis: str) 
         await message.answer(T.say(actor, too_late(decision)))
         return
     delivered = await tell_applicant(bot, app, t(app.language, "msg_reject"))
-    await message.answer(T.say(actor, f"{app.number}: рад этилди, асос сақланди."
+    await message.answer(T.say(actor, f"{app.full_name}: рад этилди, асос сақланди."
                                + ("" if delivered or not app.telegram_user_id else " Номзодга хабар етмади.")))
 
 
@@ -225,11 +233,11 @@ async def app_score(ctx: Ctx, args: dict) -> None:
         await ctx.state.set_state(InterviewScore.waiting)
         await ctx.state.update_data(app_id=app.id)
         scale = "\n".join(f"{n} — {label}" for n, label in rubric.SCALE.items())
-        await ctx.say(f"{app.number}: тузилмали суҳбат баҳоси (0–4). Суҳбатни ўтказган киши қўяди; шу роль учун "
+        await ctx.say(f"{app.full_name}: тузилмали суҳбат баҳоси (0–4). Суҳбатни ўтказган киши қўяди; шу роль учун "
                       f"бир хил асосий саволлар бўйича. Рақамни ёзинг:\n{scale}")
         return
     if not ctx.confirmed:
-        await ask_confirm(ctx, f"{app.number} — {app.full_name}: суҳбат баҳоси {score} ({rubric.SCALE[score]}).",
+        await ask_confirm(ctx, f"{app.full_name}: суҳбат баҳоси {score} ({rubric.SCALE[score]}).",
                           "app_score", {"number": app.number, "score": score})
         return
     await _save_score(ctx.message, ctx.tg, app.id, score)
@@ -259,15 +267,16 @@ async def _save_score(message: Message, tg: int, app_id: str, score: int) -> Non
             return
         app.scorecard = rubric.with_human_score(app.scorecard, "interview", score, actor.id)
         lines = rubric.card_lines(app.scorecard)
-        number = app.number
-    await message.answer(T.say(actor, f"{number}: суҳбат баҳоси сақланди.\n\n" + "\n".join(lines)))
+        name = app.full_name
+    await message.answer(T.say(actor, f"{name}: суҳбат баҳоси сақланди.\n\n" + "\n".join(lines)))
 
 
 # --------------------------------------------------------------------------- deletion requests and legal hold
 
-def deletion_hint(number: str) -> str:
-    return (f"Қонуний сақлаш асоси бўлмаса, «{number} маълумотини ўчир» деб ёзинг; бўлса — "
-            f"«{number} legal hold».")
+def deletion_hint(full_name: str) -> str:
+    name = given_name(full_name) or "номзод"
+    return (f"Қонуний сақлаш асоси бўлмаса, «{name}нинг маълумотини ўчир» деб ёзинг; бўлса — "
+            f"«{name}га legal hold».")
 
 
 async def app_purge(ctx: Ctx, args: dict) -> None:
@@ -275,20 +284,20 @@ async def app_purge(ctx: Ctx, args: dict) -> None:
     if app is None:
         return
     if not ctx.confirmed:
-        await ask_confirm(ctx, f"{app.number} — {app.full_name}: шахсий маълумотини ўчираман. Ариза рақами ва қарор "
+        await ask_confirm(ctx, f"{app.full_name}: шахсий маълумотини ўчираман. Ариза рақами ва қарор "
                                "қолади. Буни қайтариб бўлмайди.", "app_purge", {"number": app.number})
         return
     async with session_scope() as session:
         actor = await session.get(Employee, ctx.emp.id)
         app = await session.get(Application, app.id)
-        chat, lang, number = app.telegram_user_id, app.language, app.number
+        chat, lang, name = app.telegram_user_id, app.language, app.full_name
         try:
             await retention.delete_now(session, app, actor)
         except retention.RetentionError as exc:
             await ctx.say("Legal hold ўрнатилган: маълумот ўчирилмайди, юрист кўриб чиқади."
                           if str(exc) == "legal_hold" else "Бу ариза маълумоти аллақачон ўчирилган.")
             return
-    await ctx.say(f"{number}: шахсий маълумот ўчирилди. Ариза рақами ва қарор сақланди.")
+    await ctx.say(f"{name}: шахсий маълумот ўчирилди. Ариза рақами ва қарор сақланди.")
     if chat:
         try:
             await ctx.bot.send_message(chat, t(lang, "delete_done"))
@@ -301,20 +310,20 @@ async def app_hold(ctx: Ctx, args: dict) -> None:
     if app is None:
         return
     if not ctx.confirmed:
-        await ask_confirm(ctx, f"{app.number} — {app.full_name}: legal hold ўрнатаман — маълумот автоматик ҳам, "
+        await ask_confirm(ctx, f"{app.full_name}: legal hold ўрнатаман — маълумот автоматик ҳам, "
                                "қўлда ҳам ўчирилмайди, юристга хабар бораман.", "app_hold", {"number": app.number})
         return
     async with session_scope() as session:
         actor = await session.get(Employee, ctx.emp.id)
         app = await session.get(Application, app.id)
         await retention.set_legal_hold(session, app, actor, True)
-        number, lang = app.number, app.language
+        name, lang = app.full_name, app.language
         lawyers = (await session.execute(select(Employee).where(
             Employee.role == "lawyer", Employee.status == "active", Employee.telegram_user_id.is_not(None)))).scalars().all()
-    await ctx.say(f"{number}: legal hold ўрнатилди. Автоматик ва қўлда ўчириш тўхтатилди; "
+    await ctx.say(f"{name}: legal hold ўрнатилди. Автоматик ва қўлда ўчириш тўхтатилди; "
                   + ("юристга хабар берилди." if lawyers else "юрист роли тайинланмаган — уни ўзингиз хабардор қилинг."))
     for lawyer in lawyers:
-        await notify(ctx.bot, lawyer, f"{number}: номзод маълумотини ўчиришни сўраган, лекин legal hold ўрнатилди "
+        await notify(ctx.bot, lawyer, f"{name}: номзод маълумотини ўчиришни сўраган, лекин legal hold ўрнатилди "
                                       f"({actor.full_name}). Илтимос, кўриб чиқинг.")
     await tell_applicant(ctx.bot, app, t(lang, "delete_hold"))
 

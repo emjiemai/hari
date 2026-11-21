@@ -37,7 +37,7 @@ async def test_reminds_owner_and_hr_after_one_work_day_then_daily(session_scope)
     assert bot.sent == []
     await scheduler.tick(bot, at(TUESDAY, 10, 30))  # Tuesday morning: due now
     assert sorted(chat for chat, _ in bot.sent) == [1001, 1002]  # owner and HR, not ordinary staff
-    assert all("A-2026-11-0001" in text and "Алиев Вали" in text for _, text in bot.sent)
+    assert all("Алиев Вали" in text and "A-2026" not in text for _, text in bot.sent)  # a name, not a number
     await scheduler.tick(bot, at(TUESDAY, 15))  # same day again: no repeat
     assert len(bot.sent) == 2
     await scheduler.tick(bot, at(WEDNESDAY, 10, 30))  # next day: reminded again until decided
@@ -50,4 +50,4 @@ async def test_decided_application_is_not_reminded(session_scope):
     await scheduler.tick(bot, at(WEDNESDAY, 10, 30))
     assert not any("сизни кутяпти" in text for _, text in bot.sent)  # no "waiting for a decision" alert
     # the morning brief still says what is next after an interview: score it, then hire or reject
-    assert all("суҳбат баҳоси" in text for _, text in bot.sent)
+    assert all("суҳбатдан кейин" in text for _, text in bot.sent)

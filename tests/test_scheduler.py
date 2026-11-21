@@ -106,7 +106,7 @@ async def test_unanswered_case_goes_reminder_then_manager_then_owner_digest(sess
     await scheduler.tick(bot, at_tashkent(date(2026, 11, 10), 9, 20))  # 480 + 20, next morning
     await scheduler.tick(bot, at_tashkent(date(2026, 11, 10), 17, 35))  # the daily digest
     assert [chat for chat, _ in bot.sent] == [11, 10, 10]
-    assert "кунлик дайжест" in bot.sent[2][1] and "HR-" in bot.sent[2][1] and "жавобсиз" in bot.sent[2][1]
+    assert "кунлик дайжест" in bot.sent[2][1] and "маълумотнома" in bot.sent[2][1].lower() and "жавобсиз" in bot.sent[2][1]
 
 
 async def test_answering_the_case_stops_the_reminders(session_scope, staff):

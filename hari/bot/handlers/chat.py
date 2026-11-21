@@ -79,7 +79,12 @@ async def _ai_reading(ctx: Ctx) -> I.Intent | None:
             context |= await staff.queue_context(session, emp)
         if ctx.manages:
             context["applications"] = await hiring.applications_context(session)
-        people_rows = (await session.execute(select(Employee.code, Employee.full_name))).all()
+        people_rows = list((await session.execute(select(Employee.code, Employee.full_name))).all())
+        if ctx.manages:  # "Валини рад эт": an applicant's name becomes their application number for the AI
+            from hari.db.models import Application
+
+            people_rows += [(n, f) for n, f in (await session.execute(select(Application.number, Application.full_name)
+                            .where(Application.number.is_not(None), Application.full_name != ""))).all() if f]
         history = await memory.recent(session, emp, now_utc())
     return await I.route(ctx.text, names, context, [(c, n) for c, n in people_rows], history)
 

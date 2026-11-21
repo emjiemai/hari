@@ -23,7 +23,7 @@ async def app_number(session_scope) -> str:
 async def test_interview_then_reject_tells_applicant(h_apply_done, session_scope):
     h = h_apply_done
     number = await app_number(session_scope)
-    assert number in h.to(OWNER)[-1] and f"«{number} ни суҳбатга чақир»" in h.to(OWNER)[-1]  # the report says how
+    assert number not in h.to(OWNER)[-1] and "«Валини суҳбатга чақир»" in h.to(OWNER)[-1]  # by name, no number
     await h.say(OWNER, f"{number} ни суҳбатга чақир")
     assert "учрашмоқчимиз" not in h.to(APPLICANT)[-1]  # nothing before «ҳа»
     await h.say(OWNER, "ҳа")
@@ -67,8 +67,9 @@ async def test_show_sends_the_report_again(h_apply_done, session_scope):
     h = h_apply_done
     number = await app_number(session_scope)
     replies = await h.say(HR, number)
-    assert replies[0].startswith(f"Янги ариза {number}")
-    assert number in (await h.say(HR, "аризалар"))[0]
+    assert replies[0].startswith("Янги ариза: Алиев Вали")
+    listing = (await h.say(HR, "аризалар"))[0]
+    assert "Алиев Вали" in listing and number not in listing
 
 
 async def test_applications_waiting_are_listed_by_word_or_command(h_apply_done):

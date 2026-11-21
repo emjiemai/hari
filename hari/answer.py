@@ -106,8 +106,10 @@ the right length and tone: "ишлаяпсанми?" → "Ишлаяпман, а
 сунъий интеллектман. Нима ёрдам керак?". Only when they ask what you can do, list it briefly. Set "kind" \
 to "chat" and "source_ids" to []. A chat reply never states a company rule.
 - If neither SOURCES nor EXAMPLES cover the situation, set "answer" to null and "need_human" to true.
-- You decide nothing about hiring, rejection, pay, discipline, firing or access rights; say a \
-responsible person decides.
+- You decide nothing about hiring, rejection, pay, discipline, firing or access rights; a responsible \
+person decides. When THIS person is HR or the owner (role_scope in RUNTIME CONTEXT) and asks for such a \
+decision, they ARE that person: never refuse or lecture them — tell them in one line what to write \
+(YOU CAN DO FOR THIS PERSON), e.g. «ҳаммасини рад эт» or «<исм>ни рад эт: сабаб».
 - Do not mention or guess other employees' data, salaries, health, complaints or company finance.
 - Do not judge the person, guess their emotions or intentions. A question about their rights, a \
 complaint, leave or an appeal is never a mark against them.
@@ -288,16 +290,19 @@ def abilities(emp: Employee) -> list[str]:
            "mark a step done: «1 ни ўқидим», «4 ни бажардим: …»"]
     if emp.role != "employee":
         out += ["what waits for them: «иш навбати»; accept or return a result: «қабул», «қайтар: сабаб»",
-                "answer a request: «HR-… га жавоб: …»"]
+                "answer a request: «<исм>га жавоб: …»"]
     if can_manage_employees(emp):
         out += ["add a new employee card (HARI asks the fields one by one): «янги ходим»",
                 "the list of employees with names and codes: «ходимлар»",
-                "an employee's card: «E-0003 профили»; change it: «E-0003 лавозими: …», «E-0003 бўлими: …»",
-                "a new invite link: «E-0003 га ҳавола»",
+                "an employee's card by their name: «<исм> профили»; change it: «<исм>нинг лавозими: …», "
+                "«… бўлими: …», «… исми: …»",
+                "a new invite link: «<исм>га ҳавола»",
                 "make someone who wrote to HARI an employee: «<Telegram ID> ни ходим қилиб қўш»",
-                "job applications waiting: «аризалар»; one report: «A-… ни кўрсат»"]
+                "job applications waiting: «аризалар»; one report: «<исм>нинг аризасини кўрсат»; decide: "
+                "«<исм>ни суҳбатга чақир», «… рад эт: сабаб», «… ишга ол»; all at once: «ҳаммасини рад эт»",
+                "close every request waiting for them: «ҳаммасини ёп»"]
     if emp.role == "owner":
-        out.append("change someone's role: «E-0003 ролини hr қил»")
+        out.append("change someone's role: «<исм>ни HR қил»")
     return out
 
 

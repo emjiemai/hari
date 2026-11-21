@@ -150,12 +150,11 @@ async def test_full_onboarding_journey(h):
     replies = await h.say(NEW, "Офисда автомобиль парковкаси борми?")
     assert "аниқ билмайман" in replies[0] and replies[0].count("«ҳа»") == 1  # said once, in its own words
     replies = await h.say(NEW, "ҳа")
-    assert "Мурожаат қабул қилинди: HR-" in replies[-1]
-    number = re.search(r"HR-\d{4}-\d{2}-\d{4}", replies[-1]).group(0)
-    assert number in h.to(HR)[-1] and "парковкаси" in h.to(HR)[-1] and "га жавоб:" in h.to(HR)[-1]
+    assert "Мурожаатингиз қабул қилинди" in replies[-1] and "HR-" not in replies[-1]  # no number shown
+    assert "Янгиев Ботир" in h.to(HR)[-1] and "парковкаси" in h.to(HR)[-1] and "«Ботирга жавоб: …»" in h.to(HR)[-1]
 
-    # HR answers and closes by writing; the newcomer gets the answer
-    replies = await h.say(HR, f"{number} га жавоб: Ҳа, ҳовлида 10 та жой бор.")
+    # HR answers and closes by writing the person's name, not a number; the newcomer gets the answer
+    replies = await h.say(HR, "Ботирга жавоб: Ҳа, ҳовлида 10 та жой бор.")
     assert "ҳал бўлдими" in replies[0]
     await h.say(HR, "ҳа")
     assert "10 та жой" in h.to(NEW)[-1] and "ёпилди" in h.to(NEW)[-1]
@@ -182,9 +181,9 @@ async def test_typed_commands_without_ai(h):
     assert "Иш навбатингиз бўш" in (await h.say(HR, "иш навбати"))[0]
     assert "Устозов Анвар" in (await h.say(HR, "ходимлар"))[0]
     assert "Бу амал учун ҳуқуқингиз йўқ." == (await h.say(MENTOR, "/xodimlar"))[0]
-    replies = await h.say(HR, "E-0002")
-    assert "Устозов Анвар" in replies[0] and "лавозими:" in replies[0]
-    replies = await h.say(HR, "E-0002 лавозими: Катта сотувчи-маслаҳатчи")
+    replies = await h.say(HR, "Анвар профили")
+    assert "Устозов Анвар" in replies[0] and "«Анварнинг лавозими: …»" in replies[0] and "E-0002" not in replies[0]
+    replies = await h.say(HR, "Анварнинг лавозими: Катта сотувчи-маслаҳатчи")
     assert "Тасдиқлайсизми?" in replies[0]
     assert "Бекор" in (await h.say(HR, "йўқ"))[0]
     replies = await h.say(MENTOR, "мурожаат")
@@ -192,7 +191,7 @@ async def test_typed_commands_without_ai(h):
     replies = await h.say(MENTOR, "4")  # a certificate, by its number
     assert "«Маълумотнома керак»" in replies[0]
     replies = await h.say(MENTOR, "Банк учун иш жойидан маълумотнома керак")
-    assert "Мурожаат қабул қилинди: HR-" in replies[-1]
+    assert "Мурожаатингиз қабул қилинди: Маълумотнома керак" in replies[-1]
     replies = await h.say(MENTOR, "лотинда ёзинг")
     assert replies[-1] == cyrillic_to_latin("Тил сақланди. Бундан буён шу тилда ёзаман.")
     no_buttons(h)

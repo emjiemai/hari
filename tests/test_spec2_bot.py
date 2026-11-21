@@ -47,7 +47,7 @@ async def test_complaint_from_the_list_asks_who_it_is_about_and_avoids_them(h, s
     assert "Шикоят кимга оид?" in replies[0] and "1. Бевосита раҳбарим" in replies[0]
     await h.say(ME, "1")
     replies = await h.say(ME, "Мажлисда қўпол гапирди, 5 ноябрь")
-    assert "Мурожаат қабул қилинди: HR-" in replies[-1] and "Кадрова Зайнаб" in replies[-1]
+    assert "Мурожаатингиз қабул қилинди" in replies[-1] and "Кадрова Зайнаб" in replies[-1]
     assert any("Мажлисда қўпол гапирди" in t for t in h.to(HR))
     assert not any("қўпол" in t for t in h.to(BOSS)) and not any("қўпол" in t for t in h.to(OWNER))
     (case,) = await cases(session_scope)
@@ -204,7 +204,7 @@ async def test_legal_hold_blocks_deletion(h_apply_done, session_scope, staff):
 async def test_role_change_needs_the_owners_one_time_confirmation(h, session_scope):
     assert await h.say(HR, "/rol E-0004 manager") == ["Бу амал учун ҳуқуқингиз йўқ."]
     replies = await h.say(OWNER, "/rol E-0004 hr")
-    assert "Роль ўзгариши лойиҳаси: E-0004 Аълоев Анвар" in replies[0] and "Ходим → HR" in replies[0]
+    assert "Роль ўзгариши лойиҳаси: Аълоев Анвар" in replies[0] and "Ходим → HR" in replies[0]
     async with session_scope() as s:
         me = (await s.execute(select(Employee).where(Employee.code == "E-0004"))).scalar_one()
         assert me.role == "employee"  # a draft changes nothing

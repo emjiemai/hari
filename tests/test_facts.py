@@ -65,8 +65,8 @@ async def test_only_hr_and_owners_are_told_how_to_add_or_list_people(session_sco
     async with session_scope() as s:
         owner, hr, emp = [await s.get(Employee, i) for i in (owner_id, hr_id, emp_id)]
     as_text = {who: " ".join(abilities(p)) for who, p in (("owner", owner), ("hr", hr), ("emp", emp))}
-    assert "«янги ходим»" in as_text["owner"] and "«ходимлар»" in as_text["hr"] and "ролини" in as_text["owner"]
-    assert "ролини" not in as_text["hr"]
+    assert "«янги ходим»" in as_text["owner"] and "«ходимлар»" in as_text["hr"] and "HR қил" in as_text["owner"]
+    assert "HR қил" not in as_text["hr"]
     assert "«янги ходим»" not in as_text["emp"] and "«ходимлар»" not in as_text["emp"]
 
 

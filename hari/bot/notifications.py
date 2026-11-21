@@ -14,8 +14,7 @@ from hari.worktime import fmt
 
 def case_card(case: HRCase, requester: Employee, about: Employee | None) -> str:
     lines = [
-        f"Янги мурожаат {case.number}",
-        f"Тур: {case.title}" + (" (нозик — фақат сиз кўрасиз)" if case.privacy == "sensitive" else ""),
+        f"Янги мурожаат: {case.title}" + (" (нозик — фақат сиз кўрасиз)" if case.privacy == "sensitive" else ""),
         f"Кимдан: {requester.full_name}, {requester.position} ({requester.department})",
     ]
     if about:
@@ -24,9 +23,14 @@ def case_card(case: HRCase, requester: Employee, about: Employee | None) -> str:
     return "\n".join(lines)
 
 
-def case_hint(case: HRCase) -> str:
-    return (f"Кўриб чиқаётган бўлсангиз: «{case.number} ни олдим». "
-            f"Жавоб ёки қарор: «{case.number} га жавоб: …» — ходимга шу матн боради.")
+def first_name(person: Employee) -> str:
+    parts = person.full_name.split()
+    return parts[1] if len(parts) > 1 else person.full_name
+
+
+def case_hint(case: HRCase, requester: Employee) -> str:
+    return (f"Жавобингизни «{first_name(requester)}га жавоб: …» деб ёзинг — ходимга шу матн боради. Кўриб "
+            "чиқаётган бўлсангиз, «олдим» деб ёзиб қўйинг.")
 
 
 async def tell_case_handler(bot: Bot, session: AsyncSession, case: HRCase) -> bool:
@@ -35,7 +39,7 @@ async def tell_case_handler(bot: Bot, session: AsyncSession, case: HRCase) -> bo
     assignee = await session.get(Employee, case.assignee_id)
     requester = await session.get(Employee, case.requester_id)
     about = await session.get(Employee, case.about_employee_id) if case.about_employee_id else None
-    return await notify(bot, assignee, f"{case_card(case, requester, about)}\n\n{case_hint(case)}")
+    return await notify(bot, assignee, f"{case_card(case, requester, about)}\n\n{case_hint(case, requester)}")
 
 
 async def tell_step_acceptor(bot: Bot, acceptor: Employee, owner: Employee, step: OnboardingStep) -> bool:

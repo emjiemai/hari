@@ -29,8 +29,13 @@ BRIEF_HOURS = 3  # the brief goes out in the first hours of the person's work da
 
 
 def first_name(emp: Employee) -> str:
-    parts = emp.full_name.split()
-    return parts[1] if len(parts) > 1 else emp.full_name
+    return given_name(emp.full_name)
+
+
+def given_name(full_name: str | None) -> str:
+    """"Алиев Вали" → "Вали": how a person is called in a sentence (surname first, as on Uzbek cards)."""
+    parts = (full_name or "").split()
+    return parts[1] if len(parts) > 1 else (parts[0] if parts else "")
 
 
 def step_line(n: int, step: OnboardingStep) -> str:
@@ -80,12 +85,14 @@ def _before(moment: datetime | None, today: date) -> bool:
     return moment is not None and local(as_utc(moment)).date() < today
 
 
-def _section(title: str, lines: list[str], more_hint: str) -> list[str]:
+def _section(title: str, lines: list[str], more_hint: str, tail: str = "") -> list[str]:
     if not lines:
         return []
     out = [title] + [f"• {line}" for line in lines[:MAX_ITEMS]]
     if len(lines) > MAX_ITEMS:
         out.append(f"…ва яна {len(lines) - MAX_ITEMS} та — {more_hint}")
+    if tail:
+        out.append(tail)
     return out
 
 
@@ -98,49 +105,59 @@ async def todo(session: AsyncSession, emp: Employee, now: datetime) -> list[str]
     blocks.append(_section("Мослашув режангиздан:", [step_line(n, s) for n, s in steps], "«режам» деб ёзинг."))
 
     # Only what this person is responsible for: the results that were sent to them, the requests they hold.
-    # (HR and owners MAY act on everyone's; their brief still lists only their own.)
+    # (HR and owners MAY act on everyone's; their brief still lists only their own.) One short line per item,
+    # and what to write said once per section, not under every line.
     accept = [(ref, s, o) for ref, s, o in await queue_steps(session, emp)
               if _before(s.submitted_at, today) and await _my_step(session, emp, s, o)]
+    first = given_name(accept[0][2].full_name) if accept else ""
     blocks.append(_section(
-        "Сизнинг қабулингизни кутаётган натижалар:",
-        [f"{ref}. {o.full_name} — «{s.title}». «{ref} ни қабул қил» ёки «{ref} ни қайтар: нимани тузатиш керак»."
-         for ref, s, o in accept], "«иш навбати» деб ёзинг."))
+        "Қабулингизни кутаётган натижалар:", [f"{o.full_name} — «{s.title}»" for _, s, o in accept],
+        "«иш навбати» деб ёзинг.",
+        tail=f"«{first}никини қабул қил» ёки «{first}никини қайтар: нимани тузатиш керак» деб ёзинг."))
 
     cases = sorted(await C.open_for_handler(session, emp), key=lambda c: as_utc(c.first_response_due))
-    case_lines = []
+    case_lines, case_people = [], []
     for c in cases:
         if not _before(c.created_at, today):
             continue
         if c.assignee_id != emp.id and not (c.assignee_id is None and emp.role in ("hr", "owner")):
             continue  # someone else holds it
         late = c.status == "submitted" and c.first_response_due and as_utc(c.first_response_due) < now
-        when = "⚠️ жавоб муддати ўтган" if late else (
-            "жавоб берилган, иш очиқ" if c.status == "decided" else f"жавоб муддати {fmt(c.first_response_due)}")
-        case_lines.append(f"{c.number} — {c.title}, {when}. Жавоб: «{c.number} га жавоб: …».")
-    blocks.append(_section("Жавобингизни кутаётган мурожаатлар:", case_lines, "«иш навбати» деб ёзинг."))
+        when = "⚠️ муддати ўтган" if late else (
+            "жавоб берилган, ҳали очиқ" if c.status == "decided" else f"муддати {fmt(c.first_response_due)}")
+        requester = await session.get(Employee, c.requester_id)
+        who = requester.full_name if requester else "ходим"
+        case_people.append(given_name(who))
+        case_lines.append(f"{who} — {c.title} ({when})")
+    blocks.append(_section("Жавобингизни кутаётган мурожаатлар:", case_lines, "«иш навбати» деб ёзинг.",
+                           tail=f"Жавоб: «{case_people[0] if case_people else ''}га жавоб: …»; ҳаммасини бирдан "
+                                "ёпиш: «ҳаммасини ёп»."))
 
     if can_manage_employees(emp):
-        apps = (await session.execute(select(Application).where(
-            Application.status.in_(("submitted", "interview"))).order_by(Application.submitted_at))).scalars().all()
-        app_lines = []
-        for a in apps:
-            if not _before(a.submitted_at, today):
-                continue
-            vac = await session.get(Vacancy, a.vacancy_id) if a.vacancy_id else None
-            where = f", {vac.title}" if vac else ""
-            if a.status == "submitted":
-                ask = f"кўриб чиқинг: «{a.number} ни кўрсат», кейин суҳбатга чақиринг ёки рад этинг"
-            else:
-                ask = f"суҳбат ўтган бўлса, баҳо қўйинг: «{a.number} суҳбат баҳоси 0–4», кейин ишга олинг ёки рад этинг"
-            app_lines.append(f"{a.number} — {a.full_name or 'номзод'}{where}: {ask}.")
         asking = (await session.execute(select(Application).where(
             Application.deletion_requested_at.is_not(None), Application.purged_at.is_(None),
             Application.legal_hold.is_not(True)))).scalars().all()
-        for a in asking:
-            if _before(a.deletion_requested_at, today):
-                app_lines.append(f"{a.number} — маълумотини ўчиришни сўраган: «{a.number} маълумотини ўчир» "
-                                 f"ёки «{a.number} legal hold».")
-        blocks.append(_section("Қарор кутаётган аризалар:", app_lines, "«аризалар» деб ёзинг."))
+        asking = [a for a in asking if _before(a.deletion_requested_at, today)]
+        asking_ids = {a.id for a in asking}
+        apps = (await session.execute(select(Application).where(
+            Application.status.in_(("submitted", "interview"))).order_by(Application.submitted_at))).scalars().all()
+        app_lines, app_names = [], []
+        for a in apps:
+            if not _before(a.submitted_at, today) or a.id in asking_ids:
+                continue  # one that asked to be deleted is listed once, below
+            vac = await session.get(Vacancy, a.vacancy_id) if a.vacancy_id else None
+            where = f", {vac.title}" if vac else ""
+            stage = " — суҳбатдан кейин" if a.status == "interview" else ""
+            app_lines.append(f"{a.full_name or 'номзод'}{where}{stage}")
+            app_names.append(given_name(a.full_name) or "номзод")
+        name = app_names[0] if app_names else ""
+        blocks.append(_section("Қарор кутаётган аризалар:", app_lines, "«аризалар» деб ёзинг.",
+                               tail=f"Кўриш: «{name}нинг аризасини кўрсат»; қарор: «{name}ни суҳбатга чақир», "
+                                    f"«… ишга ол» ёки «… рад эт: сабаб»; ҳаммасини бирдан: «ҳаммасини рад эт»."))
+        asked = given_name(asking[0].full_name) if asking else ""
+        blocks.append(_section("Маълумотини ўчиришни сўраганлар:",
+                               [a.full_name or "номзод" for a in asking], "«аризалар» деб ёзинг.",
+                               tail=f"«{asked}нинг маълумотини ўчир» ёки, сақлаш шарт бўлса, «{asked}га legal hold»."))
 
     return ["\n".join(b) for b in blocks if b]
 

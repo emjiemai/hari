@@ -37,7 +37,8 @@ async def test_full_application_reaches_owner_and_hr(h_apply, monkeypatch, sessi
         assert "Сайт: Garmin" in report and "B2B савдо менежери" in report and "Биринчи жавоб" in report
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
-    assert f"«{app.number} ни суҳбатга чақир»" in h.to(OWNER)[-1] and f"«{app.number} ни ишга ол»" in h.to(OWNER)[-1]
+    assert "«Валини суҳбатга чақир»" in h.to(OWNER)[-1] and "«Валини ишга ол»" in h.to(OWNER)[-1]
+    assert app.number not in " ".join(h.to(OWNER))  # people see names, not application numbers
     assert app.status == "submitted" and app.reported_at is not None
     assert app.verdict == "ready" and app.job_origin == "ai" and app.source == "apply_garmin"
     assert app.scorecard["total"] is None and app.scorecard["criteria"]["interview"]["score"] is None

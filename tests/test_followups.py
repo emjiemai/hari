@@ -67,7 +67,7 @@ async def test_screenshot_conversation_ends_in_a_request_not_a_question(h, kb): 
     calls_before = len(ScriptedLLM.calls)
     third = await h.say(EMP, "tasdiqlayman")
     assert len(ScriptedLLM.calls) == calls_before  # a "yes" to the offer is not another AI question
-    assert lat("Мурожаат қабул қилинди: HR-") in third[-1]
+    assert lat("Мурожаатингиз қабул қилинди") in third[-1]
     # HR sees what the person actually said, not only "send it"
     assert "Kasalman" in h.to(HR)[-1] and "ha tayyorlab yubor" in h.to(HR)[-1]
 

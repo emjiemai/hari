@@ -20,7 +20,7 @@ def done_app(**kw) -> Application:
 
 def test_report_puts_verdict_first():
     parts = report_parts(done_app(), "Савдо менежери")
-    assert parts[0].startswith("Янги ариза A-2026-11-0007 — Савдо менежери")
+    assert parts[0].startswith("Янги ариза: Алиев Вали — Савдо менежери")
     head = parts[0].split("\n")
     assert head[1] == "HARI тавсияси: Инсон кўриб чиқишига тайёр" and head[2] == "Асос: Аниқ ва мантиқли."
     assert head[3] == "Қарорни инсон қабул қилади; HARI фақат далил тайёрлайди."

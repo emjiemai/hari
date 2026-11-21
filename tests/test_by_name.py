@@ -1,0 +1,76 @@
+"""People are named, never coded: commands by a person's name («Валини рад эт», «Анварга жавоб: …»),
+everything at once («ҳаммасини рад эт / ёп»), and a name fixed by writing — all without AI."""
+
+from __future__ import annotations
+
+import pytest
+from sqlalchemy import select
+
+from hari import cases as C
+from hari.db.models import Application, Employee, HRCase
+from hari.translit import cyrillic_to_latin as lat
+from hari.worktime import now_utc
+from tests.test_bot_flow import Harness
+
+OWNER, HR, EMP = 821, 822, 823
+
+
+@pytest.fixture
+async def h(session_scope, staff):
+    async with session_scope() as s:
+        await staff(s, "Эгаев Улуғ", "owner", department="Раҳбарият", position="Директор", tg=OWNER)
+        await staff(s, "Кадрова Зайнаб", "hr", department="HR", position="HR масъули", tg=HR)
+        emp = await staff(s, "Аълоев Анвар", tg=EMP)
+        await C.open_case(s, emp, "certificate", "Банк учун маълумотнома")
+        for i, name in enumerate(("Алиев Вали", "Каримов Бобур"), start=1):
+            s.add(Application(id=f"ap{i}", number=f"A-2026-11-000{i}", full_name=name, status="submitted",
+                              submitted_at=now_utc(), reported_at=now_utc(), telegram_user_id=9000 + i,
+                              language="uz_cyrl"))
+    return Harness()
+
+
+async def statuses(session_scope) -> dict[str, str]:
+    async with session_scope() as s:
+        return {a.full_name: a.status for a in (await s.execute(select(Application))).scalars()}
+
+
+async def test_reject_by_name_without_any_number(h, session_scope):
+    replies = await h.say(OWNER, "Валини рад эт: тажрибаси бу ишга мос эмас")
+    assert "Тасдиқлайсизми?" in replies[0] and "Алиев Вали" in replies[0] and "A-2026" not in replies[0]
+    await h.say(OWNER, "ҳа")
+    assert (await statuses(session_scope)) == {"Алиев Вали": "rejected", "Каримов Бобур": "submitted"}
+    assert "бошқа номзодни танладик" in h.to(9001)[-1]
+
+
+async def test_reject_all_at_once_with_one_reason(h, session_scope):
+    replies = await h.say(OWNER, "hammasini bekor qil, rad et")
+    assert lat("2 та аризани рад этаман") in replies[0] and "sabab" in replies[0]  # asked in Latin: Latin back
+    assert (await statuses(session_scope)) == {"Алиев Вали": "submitted", "Каримов Бобур": "submitted"}  # not yet
+    replies = await h.say(OWNER, "Синов аризалари")
+    assert "2 та ариза рад этилди" in replies[-1]
+    assert set((await statuses(session_scope)).values()) == {"rejected"}
+    async with session_scope() as s:
+        assert {a.decision_basis for a in (await s.execute(select(Application))).scalars()} == {"Синов аризалари"}
+
+
+async def test_close_all_requests_and_answer_by_name(h, session_scope):
+    replies = await h.say(HR, "Анварга жавоб: Маълумотнома эртага тайёр бўлади")
+    assert "Аълоев Анвар" not in replies[0] or "HR-" not in replies[0]
+    assert "ҳал бўлдими" in replies[0]
+    await h.say(HR, "очиқ")  # answered, still open
+    assert "эртага тайёр" in h.to(EMP)[-1] and "HR-" not in h.to(EMP)[-1]
+    replies = await h.say(HR, "ҳаммасини ёп")
+    assert "1 та мурожаатни жавоб бериб ёпаман" in replies[0]
+    await h.say(HR, "Маълумотнома берилди")
+    async with session_scope() as s:
+        assert {c.status for c in (await s.execute(select(HRCase))).scalars()} == {"closed"}
+    assert "Маълумотнома берилди" in h.to(EMP)[-1]
+
+
+async def test_a_name_is_fixed_by_writing(h, session_scope):
+    replies = await h.say(OWNER, "Анварнинг исми: Аълоев Анвар Ботирович")
+    assert "Тасдиқлайсизми?" in replies[0]
+    await h.say(OWNER, "ҳа")
+    async with session_scope() as s:
+        assert (await s.execute(select(Employee).where(Employee.telegram_user_id == EMP))).scalar_one().full_name \
+            == "Аълоев Анвар Ботирович"

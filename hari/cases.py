@@ -155,7 +155,7 @@ async def continuity_signal(session: AsyncSession, case: HRCase, requester: Empl
     assignee = await session.get(Employee, case.assignee_id) if case.assignee_id else None
     who = f"{requester.full_name} ({requester.position}, {requester.department})"
     formal = case.type == "resignation"
-    fact = (f"{who} расмий ишдан бўшаш аризаси берди ({case.number})." if formal else
+    fact = (f"{who} расмий ишдан бўшаш аризаси берди." if formal else
             f"{who} ишга оид тасдиқланган каналда кетишни ўйлаётганини айтди. Расмий ариза йўқ; бу якуний қарор эмас.")
     await digest.add(
         session, f"exit:{case.id}", "continuity", priority=5 if formal else 10, fact=fact,

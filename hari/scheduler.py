@@ -200,8 +200,8 @@ async def applicants_waiting(session: AsyncSession, now: datetime) -> list[str]:
             continue
         vac = await session.get(Vacancy, app.vacancy_id) if app.vacancy_id else None
         where = f" ({vac.title})" if vac else ""
-        text = (f"Ҳей, {app.number} — {app.full_name or 'номзод'}{where} сизни кутяпти. "
-                "Кўриб чиқиб, суҳбатга чақиринг ёки рад этинг.")
+        text = (f"{app.full_name or 'Бир номзод'}{where} аризаси бир кундан бери қарор кутяпти. Кўриб чиқиб, "
+                "суҳбатга чақиринг ёки рад этинг.")
         for person in people:
             if await _brief_listed(session, person, app, now):
                 continue

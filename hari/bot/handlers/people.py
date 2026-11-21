@@ -20,10 +20,13 @@ from aiogram.types import Message, User
 from loguru import logger
 from sqlalchemy import select
 
+import json
+
 from hari import approvals, audit, owners, voice
 from hari import intent as I
 from hari import onboarding as O
 from hari.access import can_manage_employees, is_staff
+from hari.agenda import given_name
 from hari.apply.report import vacancy_title
 from hari.apply.texts import STATUS_LABELS as APP_STATUS
 from hari.bot import texts as T
@@ -32,6 +35,7 @@ from hari.bot.context import Ctx, ask_confirm, ask_pick
 from hari.bot.handlers.staff import ROLE_LABELS, ROLE_WORDS, _cancelled, _numbered
 from hari.bot.ui import NO_KEYBOARD, notify
 from hari.config import settings
+from hari.crypto import decrypt, encrypt
 from hari.db.models import Application, AuditEvent, Employee
 from hari.db.session import session_scope
 from hari.employees import CardError, CardInput, create_card
@@ -44,7 +48,7 @@ STATUS = {"candidate": "номзод", "offer": "таклиф берилган",
           "active": "фаол", "absent": "йўқ (таътил ёки касал)", "exiting": "ишдан кетмоқда", "archived": "архивда"}
 LANGS = {"uz_cyrl": "ўзбек (кирилл)", "uz_latn": "ўзбек (лотин)", "ru": "рус"}
 DAYS = ["Ду", "Се", "Чо", "Па", "Жу", "Ша", "Як"]
-FIELDS = {"pos": ("position", "лавозим"), "dept": ("department", "бўлим")}
+FIELDS = {"pos": ("position", "лавозим"), "dept": ("department", "бўлим"), "name": ("full_name", "исм")}
 
 
 class AddPerson(StatesGroup):
@@ -84,12 +88,10 @@ async def profile_card(session, emp: Employee) -> str:  # noqa: ANN001
         done, total = O.progress(plan)
         onboarding = f"{done}/{total} қадам"
     days = ", ".join(DAYS[int(d)] for d in emp.work_days.split(",") if d.strip().isdigit() and int(d) < 7)
-    tg = (f"{emp.telegram_user_id} (боғланган {fmt(emp.identity_verified_at)})" if emp.telegram_user_id
-          else "ҳали боғланмаган")
+    tg = f"уланган ({fmt(emp.identity_verified_at)})" if emp.telegram_user_id else "ҳали уланмаган"
     lines = [
         emp.full_name,
-        f"ID: {emp.code}",
-        f"Telegram ID: {tg}",
+        f"Telegram: {tg}",
         f"Ҳолат: {STATUS.get(emp.status, emp.status)}",
         f"Бўлим: {emp.department}",
         f"Лавозим: {emp.position}",
@@ -110,10 +112,11 @@ async def profile_card(session, emp: Employee) -> str:  # noqa: ANN001
 
 
 def card_hint(viewer: Employee, emp: Employee) -> str:
-    """What the viewer can write to change the card (there are no buttons)."""
-    lines = [f"Ўзгартириш учун ёзинг: «{emp.code} лавозими: …» ёки «{emp.code} бўлими: …»."]
+    """What the viewer can write to change the card (there are no buttons), by the person's name."""
+    name = given_name(emp.full_name)
+    lines = [f"Ўзгартириш учун ёзинг: «{name}нинг лавозими: …», «{name}нинг бўлими: …» ёки «{name}нинг исми: …»."]
     if viewer.role == "owner":
-        lines.append(f"Роль: «{emp.code} ролини hr қил» (роллар: {', '.join(ROLE_LABELS)}).")
+        lines.append(f"Роль: «{name}ни HR қил» (роллар: ходим, раҳбар, HR, бухгалтер, юрист, IT админ, эгаси).")
     return "\n".join(lines)
 
 
@@ -149,7 +152,12 @@ async def report_stranger(bot: Bot, user: User, why: str = "") -> None:
         if not targets:
             return
         # Their Telegram app's language is kept, so a card made from this report starts in a language they read.
-        await audit.record(session, "stranger.report", "sent", object_type="telegram", object_id=key, detail=lang)
+        # Who it was, so the owner can add them by name («Алишерни ходим қилиб қўш») instead of a number.
+        # Encrypted at rest when a key is set; the log line never carries it.
+        name = " ".join(f"{user.first_name or ''} {user.last_name or ''}".split())[:40]
+        who = json.dumps({"lang": lang, "tg": user.id, "name": name}, ensure_ascii=False)
+        await audit.record(session, "stranger.report", "sent", object_type="telegram", object_id=key,
+                           detail=encrypt(who))
         app = (await session.execute(select(Application).where(Application.telegram_user_id == user.id)
                                      .order_by(Application.created_at.desc()).limit(1))).scalar_one_or_none()
         applied = "йўқ"
@@ -162,22 +170,48 @@ async def report_stranger(bot: Bot, user: User, why: str = "") -> None:
         "",
         f"Telegram'даги исми: {name}",
         f"Username: @{user.username}" if user.username else "Username: —",
-        f"Telegram ID: {user.id}",
         f"Telegram тили: {user.language_code or '—'}",
         f"Вақт: {fmt(now_utc())}",
         f"Ишга ариза: {applied}",
         "",
-        f"Ходимингиз бўлса, «{user.id} ни ходим қилиб қўш» деб ёзинг: лавозими, исми, бўлими ва роли сўралади. "
+        f"Ходимингиз бўлса, «{given_name(name) or name}ни ходим қилиб қўш» деб ёзинг: лавозими, исми, бўлими ва "
+        "роли сўралади. "
         "Танимасангиз, ҳеч нарса қилманг — унинг ҳеч қандай ҳуқуқи йўқ.",
     ])
     for owner in targets:
         await notify(bot, owner, text)
 
 
+def _stranger(detail: str | None) -> dict:
+    """What a stranger report kept: {"lang", "tg", "name"} (older rows kept the language only)."""
+    text = decrypt(detail or "")
+    if text.startswith("{"):
+        try:
+            return json.loads(text)
+        except ValueError:
+            return {}
+    return {"lang": text}
+
+
 async def _stranger_language(session, telegram_user_id: int) -> str:  # noqa: ANN001
     row = (await session.execute(select(AuditEvent.detail).where(
         AuditEvent.action == "stranger.report", AuditEvent.object_id == _seen_key(telegram_user_id)).limit(1))).first()
-    return row[0] if row and row[0] in LANGS else "uz_cyrl"
+    lang = _stranger(row[0]).get("lang") if row else None
+    return lang if lang in LANGS else "uz_cyrl"
+
+
+async def _waiting_strangers(session) -> list[tuple[int, str]]:  # noqa: ANN001
+    """People who opened HARI without a card and are still not on one: (Telegram ID, Telegram name)."""
+    rows = (await session.execute(select(AuditEvent.detail).where(AuditEvent.action == "stranger.report")
+                                  .order_by(AuditEvent.at.desc()).limit(50))).scalars().all()
+    bound = set((await session.execute(select(Employee.telegram_user_id).where(
+        Employee.telegram_user_id.is_not(None)))).scalars())
+    out = []
+    for detail in rows:
+        info = _stranger(detail)
+        if isinstance(info.get("tg"), int) and info["tg"] not in bound:
+            out.append((info["tg"], info.get("name") or "—"))
+    return out
 
 
 # --------------------------------------------------------------------------- finding a person by what was written
@@ -213,10 +247,10 @@ async def find_person(ctx: Ctx, args: dict, action: str, question: str) -> Emplo
     if len(fits) == 1:
         return fits[0]
     if not fits:
-        await ctx.say("Ходим топилмади. Кодини ёзинг, масалан: E-0003 (рўйхат: «ходимлар»).")
+        await ctx.say("Ходимни топмадим. Исмини тўлиқроқ ёзинг (рўйхат: «ходимлар»).")
         return None
     await ask_pick(ctx, question, action, {k: v for k, v in args.items() if k != "who"}, "emp_id",
-                   [(p.id, f"{p.code} {p.full_name} — {p.position}") for p in fits[:10]])
+                   [(p.id, f"{p.full_name} — {p.position}") for p in fits[:10]])
     return None
 
 
@@ -235,9 +269,11 @@ async def employee_edit(ctx: Ctx, args: dict) -> None:
     emp = await find_person(ctx, args, "employee_edit", "Кимнинг карточкаси?")
     if emp is None:
         return
-    field = {"position": "pos", "department": "dept"}.get(args.get("field") or "", args.get("field"))
+    field = {"position": "pos", "department": "dept", "full_name": "name", "name": "name"}.get(
+        args.get("field") or "", args.get("field"))
     if field not in FIELDS:
-        await ctx.say(f"Нимани ўзгартирай: лавозимими ёки бўлимими? Масалан: «{emp.code} лавозими: Сотувчи».")
+        await ctx.say(f"Нимани ўзгартирай: исмими, лавозимими ёки бўлимими? Масалан: "
+                      f"«{given_name(emp.full_name)}нинг лавозими: Сотувчи».")
         return
     attr, label = FIELDS[field]
     value = " ".join(str(args.get("value") or "").split())
@@ -247,11 +283,11 @@ async def employee_edit(ctx: Ctx, args: dict) -> None:
         await ctx.say(f"{emp.full_name}: ҳозирги {label} — «{getattr(emp, attr)}».\n"
                       f"Янги {label}ни ёзинг («бекор» — тўхтатиш):")
         return
-    if len(value) > 100:
-        await ctx.say("1–100 белги бўлсин.")
+    if len(value) > 100 or (field == "name" and len(value.split()) < 2):
+        await ctx.say("Исм учун фамилия ва исм керак (камида икки сўз)." if field == "name" else "1–100 белги бўлсин.")
         return
     if not ctx.confirmed:
-        await ask_confirm(ctx, f"{emp.code} {emp.full_name}: {label} «{getattr(emp, attr)}» → «{value}».",
+        await ask_confirm(ctx, f"{emp.full_name}: {label} «{getattr(emp, attr)}» → «{value}».",
                           "employee_edit", {"emp_id": emp.id, "field": field, "value": value})
         return
     await _save_field(ctx.message, ctx.bot, emp.id, field, value)
@@ -315,8 +351,8 @@ async def role_change(ctx: Ctx, args: dict) -> None:
     if role not in ROLE_LABELS and role:
         role = I.choice(str(role), [(r, (ROLE_LABELS[r], *ROLE_WORDS[r])) for r in ROLE_LABELS])
     if role not in ROLE_LABELS:
-        await ctx.say(f"{target.full_name} учун қайси роль? Масалан: «{target.code} ролини hr қил».\nРоллар: "
-                      + ", ".join(f"{k} ({v})" for k, v in ROLE_LABELS.items()))
+        await ctx.say(f"{target.full_name} учун қайси роль? Ходим, раҳбар, HR, бухгалтер, юрист, IT админ ёки "
+                      "эгаси?")
         return
     async with session_scope() as session:
         actor = await session.get(Employee, ctx.emp.id)
@@ -326,7 +362,7 @@ async def role_change(ctx: Ctx, args: dict) -> None:
         except owners.RoleError as exc:
             await ctx.say(str(exc))
             return
-        summary = (f"Роль ўзгариши лойиҳаси: {target.code} {target.full_name}\n"
+        summary = (f"Роль ўзгариши лойиҳаси: {target.full_name}\n"
                    f"{ROLE_LABELS.get(target.role, target.role)} → {ROLE_LABELS.get(role, role)}\n\n"
                    f"Тасдиқ фақат шу ўзгариш учун, бир марта ва {settings.approval_ttl_minutes} дақиқа амал қилади.")
         pending = {"approval_id": approval.id, "target_id": target.id, "role": role}
@@ -343,7 +379,7 @@ async def _role_confirm(ctx: Ctx, args: dict) -> None:
             except approvals.ApprovalError as exc:
                 await ctx.say(f"Бажарилмади: {APPROVAL_REASONS.get(exc.reason, exc.reason)}. Қайта сўранг.")
                 return
-            done = f"{target.code} {target.full_name}: роль — {ROLE_LABELS.get(target.role, target.role)}."
+            done = f"{target.full_name}: роль — {ROLE_LABELS.get(target.role, target.role)}."
     except owners.RoleError as exc:
         await ctx.say(str(exc))
         return
@@ -355,9 +391,21 @@ async def _role_confirm(ctx: Ctx, args: dict) -> None:
 async def add_person(ctx: Ctx, args: dict) -> None:
     tg = args.get("tg")
     tg = int(tg) if isinstance(tg, int) or (isinstance(tg, str) and tg.isdigit()) else I.telegram_id(ctx.text)
-    if not tg:
-        await ctx.say("Telegram ID'сини ёзинг, масалан: «123456789 ни ходим қилиб қўш».")
-        return
+    if not tg:  # by the name they have on Telegram: «Алишерни ходим қилиб қўш»
+        async with session_scope() as session:
+            waiting = await _waiting_strangers(session)
+        words = normalize(ctx.text.lower())
+        named = [(t, n) for t, n in waiting if any(len(w) >= 3 and normalize(w.lower()) in words for w in n.split())]
+        pool = named or waiting
+        if len(pool) == 1:
+            tg = pool[0][0]
+        elif not pool:
+            await ctx.say("Ҳозир картасиз ёзган одам йўқ. Улар HARI'ни очганда сизга хабар бераман.")
+            return
+        else:
+            await ask_pick(ctx, "Кимни ходим қилиб қўшай?", "add_person", {}, "tg",
+                           [(str(t), n) for t, n in pool[:10]])
+            return
     async with session_scope() as session:
         actor = await _manager(ctx.message, session)
         if actor is None:
@@ -366,12 +414,12 @@ async def add_person(ctx: Ctx, args: dict) -> None:
         bound = (await session.execute(select(Employee).where(Employee.telegram_user_id == tg))).scalar_one_or_none()
         lang = await _stranger_language(session, tg)
     if bound is not None:
-        await ctx.say(f"Бу Telegram аккаунт аллақачон {bound.code} {bound.full_name} карточкасига боғланган.")
+        await ctx.say(f"Бу Telegram аккаунт аллақачон {bound.full_name} карточкасига уланган.")
         return
     await ctx.state.clear()
     await ctx.state.set_state(AddPerson.position)
     await ctx.state.update_data(tg=tg, lang=lang)
-    await ctx.say(f"Telegram ID {tg} — янги ходим. Ҳар қадамда «бекор» деб ёзсангиз, тўхтатаман.\n\n1/4. Лавозими:")
+    await ctx.say("Янги ходим қўшамиз. Ҳар қадамда «бекор» деб ёзсангиз, тўхтатаман.\n\n1/4. Лавозими:")
 
 
 def _clean(message: Message, limit: int) -> str | None:
@@ -459,7 +507,7 @@ async def add_role(message: Message, state: FSMContext) -> None:
     await state.set_state(AddPerson.confirm)
     data = await state.get_data()
     await message.answer(
-        f"Текширинг:\nТелеграм ID: {data['tg']}\nФИШ: {data['full_name']}\nЛавозим: {data['position']}\n"
+        f"Текширинг:\nФИШ: {data['full_name']}\nЛавозим: {data['position']}\n"
         f"Бўлим: {data['department']}\nРоль: {ROLE_LABELS[role]}\nБошлаш санаси: бугун\n\n"
         "Сақласам, у дарҳол ходим бўлади. Сақлайми? «ҳа» ёки «йўқ» деб ёзинг.")
 
@@ -484,7 +532,7 @@ async def add_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
             return
         bound = (await session.execute(select(Employee).where(Employee.telegram_user_id == tg))).scalar_one_or_none()
         if bound is not None:
-            await message.answer(f"Сақланмади: бу Telegram аккаунт аллақачон {bound.code} карточкасида.")
+            await message.answer(f"Сақланмади: бу Telegram аккаунт аллақачон {bound.full_name} карточкасида.")
             return
         today = today_local()
         try:
@@ -496,8 +544,8 @@ async def add_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
             await message.answer(f"Сақланмади: {exc}")
             return
         if not created:
-            await message.answer(f"Сақланмади: {emp.code} {emp.full_name} карточкаси аллақачон бор. "
-                                 f"Унга ҳавола беринг: «{emp.code} га ҳавола».")
+            await message.answer(f"Сақланмади: {emp.full_name} карточкаси аллақачон бор. "
+                                 f"Унга ҳавола беринг: «{given_name(emp.full_name)}га ҳавола».")
             return
         emp.telegram_user_id, emp.identity_verified_at, emp.status = tg, now_utc(), "active"
         await audit.record(session, "invite.use", "bound_by_owner", actor_id=actor.id, object_type="employee",
