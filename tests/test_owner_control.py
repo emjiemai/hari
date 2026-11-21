@@ -33,9 +33,9 @@ async def test_owner_gets_the_full_card_when_someone_joins_and_sets_the_position
     await h.say(777, f"/start {token}")
     report = h.to(OWNER)[-1]
     for part in ("Янги ходим HARI'га қўшилди", "Янгиев Ботир", "Telegram: уланган",
-                 "Лавозим: Сотувчи", "Бўлим: Garmin сотув", "Роль: Ходим",
-                 "«Ботирнинг лавозими: …»", "«Ботирни HR қил»"):
+                 "Лавозим: Сотувчи", "Бўлим: Garmin сотув", "Роль: Ходим"):
         assert part in report, part
+    assert "лавозими: …" not in report and "қил»" not in report  # no instructions under the card
     assert emp.code not in report and "777" not in report  # no codes or Telegram numbers
     assert not any("қўшилди" in t for t in h.to(HR))  # the report goes to owners
 
@@ -122,8 +122,9 @@ async def test_hr_edits_department_and_employees_see_nothing(h):
     replies = await h.say(HR, "E-0003 профили")
     assert "Устозов Анвар" in replies[0] and "ролини" not in replies[0]  # only an owner changes roles
     replies = await h.say(HR, "E-0003 бўлими")
-    assert "Янги бўлимни ёзинг" in replies[0]
-    assert "Бўлим: Londry" in (await h.say(HR, "Londry"))[0]
+    assert "ҳозирги бўлим — «Garmin сотув»" in replies[0] and "Янгисини ёзинг" in replies[0]
+    assert "«Londry»" in (await h.say(HR, "Londry"))[0]  # what will change, then «ҳа»
+    assert "Бўлим: Londry" in (await h.say(HR, "ҳа"))[0]
     assert (await h.say(MENTOR, "/profil E-0001"))[0] == "Бу амал учун ҳуқуқингиз йўқ."
 
 

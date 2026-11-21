@@ -14,12 +14,12 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 from sqlalchemy import select
 
-from hari import agenda, voice
+from hari import agenda, profile, voice
 from hari import cases as C
 from hari import digest, memory, nonresponse
 from hari import intent as I
 from hari import onboarding as O
-from hari.access import can_manage_employees, can_read_document
+from hari.access import can_read_document
 from hari.answer import answer_question, logged_source
 from hari.guard import match_rule
 from hari.bot import texts as T
@@ -518,14 +518,7 @@ async def my_profile(ctx: Ctx, args: dict) -> None:
     if progress:
         lines.append(f"Мослашув: {progress}")
     if open_cases:
-        lines.append(f"Очиқ мурожаатларингиз: {open_cases} та («мурожаатларим»)")
-    lines.append("")
-    if can_manage_employees(emp):
-        name = emp.full_name.split()[1] if len(emp.full_name.split()) > 1 else emp.full_name
-        lines.append(f"Ўзгартириш: «{name}нинг исми: …», «… лавозими: …», «… бўлими: …».")
-    else:
-        lines.append("Бирор нарса нотўғри бўлса, «профилимда хато бор: …» деб ёзинг — HR тузатади.")
-    lines.append("Тил: «лотинда ёзинг», «кириллда ёзинг» ёки «пишите по-русски».")
+        lines.append(f"Очиқ мурожаатларингиз: {open_cases} та")
     await ctx.say("\n".join(lines))
 
 
@@ -538,7 +531,7 @@ async def set_language(ctx: Ctx, args: dict) -> None:
         return
     async with session_scope() as session:
         emp = await session.get(Employee, ctx.emp.id)
-        emp.language = lang
+        await profile.apply(session, emp, emp.id, [["language", lang]], how="language")
     ctx.emp.language = lang
     await ctx.say("Тил сақланди. Бундан буён шу тилда ёзаман.")
 

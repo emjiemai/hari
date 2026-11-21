@@ -69,7 +69,7 @@ def use_router(monkeypatch, *replies: dict) -> Router:
     ("A-2026-11-0001 суҳбат баҳоси 3", "app_score", {"number": "A-2026-11-0001", "score": 3}),
     ("A-2026-11-0001 ни суҳбатга чақир", "app_interview", {"number": "A-2026-11-0001"}),
     ("E-0004 лавозими: Катта сотувчи", "employee_edit",
-     {"who": "E-0004", "field": "position", "value": "Катта сотувчи"}),
+     {"who": "E-0004", "changes": [{"field": "position", "value": "Катта сотувчи"}]}),
     ("E-0004 ролини раҳбар қил", "role_change", {"who": "E-0004", "role": "manager"}),
     ("123456789 ни ходим қилиб қўш", "add_person", {"tg": 123456789}),
     ("лотинда ёзинг", "set_language", {"lang": "uz_latn"}),

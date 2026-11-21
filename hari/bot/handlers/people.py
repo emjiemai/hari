@@ -4,8 +4,9 @@
 - Someone without a card opens HARI (or a link that no longer works): every owner gets what Telegram
   tells about them, once per account. Writing «<Telegram ID> ни ходим қилиб қўш» makes them an employee
   (position, name, department, role). The owner vouches for who it is; the Telegram ID is the proof.
-- «E-0003» or «E-0003 профили» shows any card; «E-0003 лавозими: …» / «… бўлими: …» change it (owner or
-  HR); «E-0003 ролини hr қил» changes the role (owner only, through the one-time confirmation).
+- «Анвар профили» shows any card; «Анварнинг лавозими Сотувчи, бўлими Garmin бўлсин» or «исмимни … қил»
+  changes it (owner or HR, after «ҳа»), every change kept in hari.profile; «Анварни HR қил» changes the role
+  (owner only, through the one-time confirmation).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from sqlalchemy import select
 import json
 
 from hari import approvals, audit, owners, voice
+from hari import profile as P
 from hari import intent as I
 from hari import onboarding as O
 from hari.access import can_manage_employees, is_staff
@@ -48,7 +50,6 @@ STATUS = {"candidate": "номзод", "offer": "таклиф берилган",
           "active": "фаол", "absent": "йўқ (таътил ёки касал)", "exiting": "ишдан кетмоқда", "archived": "архивда"}
 LANGS = {"uz_cyrl": "ўзбек (кирилл)", "uz_latn": "ўзбек (лотин)", "ru": "рус"}
 DAYS = ["Ду", "Се", "Чо", "Па", "Жу", "Ша", "Як"]
-FIELDS = {"pos": ("position", "лавозим"), "dept": ("department", "бўлим"), "name": ("full_name", "исм")}
 
 
 class AddPerson(StatesGroup):
@@ -111,25 +112,16 @@ async def profile_card(session, emp: Employee) -> str:  # noqa: ANN001
     return "\n".join(lines)
 
 
-def card_hint(viewer: Employee, emp: Employee) -> str:
-    """What the viewer can write to change the card (there are no buttons), by the person's name."""
-    name = given_name(emp.full_name)
-    lines = [f"Ўзгартириш учун ёзинг: «{name}нинг лавозими: …», «{name}нинг бўлими: …» ёки «{name}нинг исми: …»."]
-    if viewer.role == "owner":
-        lines.append(f"Роль: «{name}ни HR қил» (роллар: ходим, раҳбар, HR, бухгалтер, юрист, IT админ, эгаси).")
-    return "\n".join(lines)
-
-
 async def report_join(bot: Bot, emp_id: str) -> None:
-    """Someone opened their invite link: every owner sees the whole card and how to change it."""
+    """Someone opened their invite link: every owner sees the whole card."""
     async with session_scope() as session:
         emp = await session.get(Employee, emp_id)
         if emp is None:
             return
         card = await profile_card(session, emp)
-        targets = [(o, card_hint(o, emp)) for o in await owners_to_tell(session, exclude_id=emp.id)]
-    for owner, hint in targets:
-        await notify(bot, owner, f"Янги ходим HARI'га қўшилди.\n\n{card}\n\n{hint}")
+        targets = await owners_to_tell(session, exclude_id=emp.id)
+    for owner in targets:
+        await notify(bot, owner, f"Янги ходим HARI'га қўшилди.\n\n{card}")
 
 
 def _seen_key(telegram_user_id: int) -> str:
@@ -262,69 +254,164 @@ async def employee_profile(ctx: Ctx, args: dict) -> None:
         return
     async with session_scope() as session:
         card = await profile_card(session, await session.get(Employee, emp.id))
-    await ctx.say(f"{card}\n\n{card_hint(ctx.emp, emp)}")
+    await ctx.say(card)
+
+
+def _wanted(ctx: Ctx, args: dict) -> tuple[list[dict], str, bool]:
+    """(changes, whose words, said of oneself) from the router's reading, filled in from the message itself
+    where the router left a value out."""
+    parsed = P.parse(ctx.text)
+    changes = [dict(c) for c in (args.get("changes") or []) if isinstance(c, dict) and c.get("field") in P.KEYS]
+    if args.get("field"):  # an older reading: one field
+        key = {"pos": "position", "dept": "department", "full_name": "name"}.get(args["field"], args["field"])
+        if key in P.KEYS:
+            changes.append({"field": key, "value": args.get("value")})
+    said = {c["field"]: c["value"] for c in parsed.changes if c["value"]}
+    for change in changes:
+        change["value"] = change.get("value") or said.get(change["field"])
+    if not changes:
+        changes = parsed.changes
+    return changes, parsed.who, parsed.mine
 
 
 async def employee_edit(ctx: Ctx, args: dict) -> None:
-    emp = await find_person(ctx, args, "employee_edit", "Кимнинг карточкаси?")
+    """Change one or more fields of a card by saying so («Анварнинг лавозими Сотувчи, бўлими Garmin бўлсин»,
+    «исмимни … қил»). HR and owners only; HARI says what will change and waits for «ҳа». Every change is kept."""
+    if args.get("resolved"):
+        if ctx.confirmed:
+            await _save(ctx, args["emp_id"], args["resolved"])
+        return
+    if not ctx.manages:
+        await ctx.say(T.NOT_ALLOWED)
+        return
+    if not args.get("emp_id"):  # the first reading of the message (a typed number from a list comes back here)
+        changes, who, mine = _wanted(ctx, args)
+        args = {k: v for k, v in args.items() if k not in ("field", "value")} | {"changes": changes}
+        if not args.get("who"):
+            args["who"] = "me" if mine and not who else (who or None)
+        if args.get("who") == "me":
+            args["emp_id"] = ctx.emp.id
+    changes = args.get("changes") or []
+    emp = await find_person(ctx, args, "employee_edit", "Кимнинг маълумотини ўзгартирай?")
     if emp is None:
         return
-    field = {"position": "pos", "department": "dept", "full_name": "name", "name": "name"}.get(
-        args.get("field") or "", args.get("field"))
-    if field not in FIELDS:
-        await ctx.say(f"Нимани ўзгартирай: исмими, лавозимими ёки бўлимими? Масалан: "
-                      f"«{given_name(emp.full_name)}нинг лавозими: Сотувчи».")
+    if not changes:
+        await ctx.say(f"{emp.full_name}: нимасини ўзгартирай — исми, лавозими, бўлими, раҳбари, мураббийи, "
+                      "ишга келган санаси, иш вақти, иш кунлари ёки тили?")
         return
-    attr, label = FIELDS[field]
-    value = " ".join(str(args.get("value") or "").split())
-    if not value:
+    if len(changes) == 1 and not changes[0].get("value"):
+        key = changes[0]["field"]
+        async with session_scope() as session:
+            now = await P.shown(session, await session.get(Employee, emp.id), key)
         await ctx.state.set_state(EditPerson.value)
-        await ctx.state.update_data(emp_id=emp.id, field=field)
-        await ctx.say(f"{emp.full_name}: ҳозирги {label} — «{getattr(emp, attr)}».\n"
-                      f"Янги {label}ни ёзинг («бекор» — тўхтатиш):")
+        await ctx.state.update_data(emp_id=emp.id, field=key)
+        await ctx.say(f"{emp.full_name}: ҳозирги {P.LABELS[key]} — «{now}». Янгисини ёзинг:")
         return
-    if len(value) > 100 or (field == "name" and len(value.split()) < 2):
-        await ctx.say("Исм учун фамилия ва исм керак (камида икки сўз)." if field == "name" else "1–100 белги бўлсин.")
+    resolved, problems, lines = [], [], []
+    async with session_scope() as session:
+        target = await session.get(Employee, emp.id)
+        for change in changes:
+            key = change["field"]
+            if not change.get("value"):
+                problems.append(f"{P.LABELS[key].capitalize()}: янгиси нима бўлсин?")
+                continue
+            try:
+                stored, shown = await P.resolve(session, target, key, change["value"])
+            except P.BadValue as exc:
+                problems.append(str(exc))
+                continue
+            was = await P.shown(session, target, key)
+            if was != shown:
+                resolved.append([key, stored, shown])
+                lines.append(f"{P.LABELS[key].capitalize()}: «{was}» → «{shown}»")
+    if not resolved:
+        await ctx.say("\n".join(problems) if problems else f"{emp.full_name}: бу маълумотлар аллақачон шундай.")
         return
-    if not ctx.confirmed:
-        await ask_confirm(ctx, f"{emp.full_name}: {label} «{getattr(emp, attr)}» → «{value}».",
-                          "employee_edit", {"emp_id": emp.id, "field": field, "value": value})
-        return
-    await _save_field(ctx.message, ctx.bot, emp.id, field, value)
+    summary = f"{emp.full_name}\n" + "\n".join(lines) + ("\n\n" + "\n".join(problems) if problems else "")
+    await ask_confirm(ctx, summary, "employee_edit", {"emp_id": emp.id, "resolved": resolved})
 
 
 @router.message(EditPerson.value, F.text)
 async def edit_value_typed(message: Message, state: FSMContext, bot: Bot) -> None:
     data = await state.get_data()
-    value = " ".join(message.text.split())
+    await state.clear()
     if _cancelled(message):
-        await state.clear()
         await message.answer(T.CANCELLED)
         return
-    if not value or len(value) > 100 or value.startswith("/"):
-        await message.answer("1–100 белги бўлсин. Қайта ёзинг ёки «бекор»:")
-        return
-    await state.clear()
-    await _save_field(message, bot, data.get("emp_id", ""), data.get("field"), value)
+    from hari.bot.handlers.chat import ctx_for, run  # here: chat imports this module
+
+    ctx = await ctx_for(message, state, bot)
+    if ctx is not None:
+        await run(ctx, I.Intent("employee_edit", {"emp_id": data.get("emp_id"), "changes": [
+            {"field": data.get("field"), "value": " ".join(message.text.split())}]}))
 
 
-async def _save_field(message: Message, bot: Bot, emp_id: str, field: str | None, value: str) -> None:
-    attr, label = FIELDS.get(field or "", (None, None))
+async def _save(ctx: Ctx, emp_id: str, resolved: list) -> None:
     async with session_scope() as session:
-        actor = await _manager(message, session)
+        actor = await _manager(ctx.message, session)
         emp = await session.get(Employee, emp_id)
-        if actor is None or emp is None or attr is None:
-            await message.answer(T.NOT_ALLOWED)
+        if actor is None or emp is None:
+            await ctx.say(T.NOT_ALLOWED)
             return
-        old = getattr(emp, attr)
-        setattr(emp, attr, value)
-        await audit.record(session, "employee.edit", "changed", actor_id=actor.id, object_type="employee",
-                           object_id=emp.id, detail=attr)
-        await session.flush()
+        done = await P.apply(session, emp, actor.id, resolved)
         card = await profile_card(session, emp)
         person = emp if emp.id != actor.id else None
-    await message.answer(T.say(actor, f"Сақланди: {label} «{old}» → «{value}».\n\n{card}"))
-    await notify(bot, person, f"Профилингиз янгиланди: {label} — {value}.")
+    if not done:
+        await ctx.say("Ўзгарадиган нарса қолмади: маълумотлар аллақачон шундай.")
+        return
+    await ctx.say("Сақланди: " + "; ".join(f"{label} «{was}» → «{now}»" for label, was, now in done) + ".\n\n" + card)
+    if person is not None:
+        await notify(ctx.bot, person, "Профилингиз янгиланди: "
+                     + "; ".join(f"{label} — {now}" for label, _, now in done) + ".")
+
+
+async def profile_fix(ctx: Ctx, args: dict) -> None:
+    """Someone wants something on their own card changed. HR and owners change it themselves (confirmed with
+    «ҳа»); anyone else's words go to HR as a data-fix request — except the language, which is theirs to set."""
+    if ctx.manages:
+        await employee_edit(ctx, {"who": "me"})
+        return
+    from hari.bot.handlers import employee  # here: the employee handlers are loaded next to this module
+
+    parsed = P.parse(ctx.text)
+    if parsed.changes and all(c["field"] == "language" for c in parsed.changes):
+        await employee.set_language(ctx, {})
+        return
+    await employee.new_case(ctx, {"type": "data_fix", "about": None,
+                                  "text": I.after_colon(ctx.text) or args.get("text") or ctx.text.strip()})
+
+
+async def profile_history(ctx: Ctx, args: dict) -> None:
+    """What was changed on a card, when and by whom: one's own, or (HR and owners) anyone's."""
+    emp = ctx.emp
+    if ctx.manages and (args.get("emp_id") or (args.get("who") not in (None, "", "me"))
+                        or await _names_someone_else(ctx)):
+        emp = await find_person(ctx, {k: v for k, v in args.items() if v != "me"}, "profile_history",
+                                "Кимнинг профили?")
+        if emp is None:
+            return
+    async with session_scope() as session:
+        rows = await P.history(session, emp.id)
+        by = {r.changed_by for r in rows if r.changed_by}
+        names = {e.id: e.full_name for e in (await session.execute(
+            select(Employee).where(Employee.id.in_(by)))).scalars()} if by else {}
+    if not rows:
+        await ctx.say(f"{emp.full_name}: профилда ҳали ҳеч нарса ўзгармаган.")
+        return
+    lines = [f"{emp.full_name} — профилдаги ўзгаришлар:"]
+    for r in rows:
+        who = names.get(r.changed_by) if r.changed_by != emp.id else None
+        lines.append(f"{fmt(r.at)} — {P.LABELS.get(r.field, r.field)}: «{r.old_value or '—'}» → "
+                     f"«{r.new_value or '—'}»" + (f" ({who})" if who else ""))
+    await ctx.say("\n".join(lines))
+
+
+async def _names_someone_else(ctx: Ctx) -> bool:
+    words = normalize(ctx.text.lower())
+    async with session_scope() as session:
+        names = (await session.execute(select(Employee.full_name).where(
+            Employee.status != "archived", Employee.id != ctx.emp.id))).scalars().all()
+    return any(len(w) >= 4 and normalize(w.lower()) in words for name in names for w in name.split())
 
 
 # --------------------------------------------------------------------------- role (owner, one-time approval)
@@ -555,7 +642,7 @@ async def add_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
         card = await profile_card(session, emp)
         welcome = T.welcome(emp, None, None)
     welcome = T.say(emp, await voice.natural(welcome, [emp.full_name, *emp.full_name.split()]))
-    await message.answer(T.say(actor, f"Ходим қўшилди.\n\n{card}\n\n{card_hint(actor, emp)}"))
+    await message.answer(T.say(actor, f"Ходим қўшилди.\n\n{card}"))
     try:
         await bot.send_message(tg, welcome, reply_markup=NO_KEYBOARD)
     except TelegramAPIError as exc:
@@ -565,5 +652,5 @@ async def add_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
 
 ACTIONS = {
     "employee_profile": employee_profile, "employee_edit": employee_edit, "role_change": role_change,
-    "add_person": add_person,
+    "add_person": add_person, "profile_fix": profile_fix, "profile_history": profile_history,
 }

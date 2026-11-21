@@ -10,10 +10,13 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hari import approvals, audit
+from hari import approvals, audit, profile
 from hari.db.models import ROLES, Approval, Employee
 from hari.employees import CardInput, create_card
 from hari.worktime import now_utc, today_local
+
+ROLE_NAMES = {"employee": "Ходим", "manager": "Раҳбар", "hr": "HR", "accountant": "Бухгалтер", "lawyer": "Юрист",
+              "it_admin": "IT админ", "owner": "Эгаси"}
 
 PLACEHOLDER = "Эгаси"
 
@@ -99,6 +102,8 @@ async def confirm_role_change(session: AsyncSession, actor: Employee, approval_i
 async def change_role(session: AsyncSession, actor: Employee, target_id: str, role: str) -> Employee:
     target = await _checked_target(session, actor, target_id, role)
     old, target.role = target.role, role
+    await profile.record(session, target.id, "role", ROLE_NAMES.get(old, old), ROLE_NAMES.get(role, role), actor.id,
+                         how="role")
     await audit.record(session, "role.change", "changed", actor_id=actor.id, object_type="employee",
                        object_id=target.id, detail=f"{old}->{role}")
     return target

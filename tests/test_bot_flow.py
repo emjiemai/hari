@@ -182,7 +182,7 @@ async def test_typed_commands_without_ai(h):
     assert "Устозов Анвар" in (await h.say(HR, "ходимлар"))[0]
     assert "Бу амал учун ҳуқуқингиз йўқ." == (await h.say(MENTOR, "/xodimlar"))[0]
     replies = await h.say(HR, "Анвар профили")
-    assert "Устозов Анвар" in replies[0] and "«Анварнинг лавозими: …»" in replies[0] and "E-0002" not in replies[0]
+    assert "Устозов Анвар" in replies[0] and "лавозими: …" not in replies[0] and "E-0002" not in replies[0]
     replies = await h.say(HR, "Анварнинг лавозими: Катта сотувчи-маслаҳатчи")
     assert "Тасдиқлайсизми?" in replies[0]
     assert "Бекор" in (await h.say(HR, "йўқ"))[0]

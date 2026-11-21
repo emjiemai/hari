@@ -276,6 +276,22 @@ class AuditEvent(Base):
     detail: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
 
+class ProfileChange(Base):
+    """Every change to a person's card, one row per field: what it was, what it became, who changed it and
+    when. The values are encrypted at rest (they are personal data); nothing is ever updated or deleted."""
+
+    __tablename__ = "profile_changes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    employee_id: Mapped[str] = mapped_column(String(36), index=True)
+    field: Mapped[str] = mapped_column(String(30))  # name | position | department | manager | mentor | …
+    old_value: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
+    changed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    how: Mapped[str] = mapped_column(String(20), default="chat")  # chat | language | role
+
+
 class AnswerLog(Base):
     """Internal answer passport (spec §30) — without the question or answer text."""
 

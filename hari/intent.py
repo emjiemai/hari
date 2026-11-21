@@ -39,6 +39,7 @@ LANGS = ("uz_cyrl", "uz_latn", "ru")
 CASE_KINDS = ("leave", "schedule", "timesheet", "certificate", "data_fix", "training", "pay_question", "legal",
               "complaint", "support", "resignation", "other")
 ABOUT = ("manager", "hr", "owner", "other")
+PROFILE_KEYS = ("name", "position", "department", "manager", "mentor", "start_date", "hours", "days", "language")
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,10 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
     Action("case_show", "all", "show one HR request by its number", '{"number": "HR-YYYY-MM-NNNN"}'),
     Action("my_profile", "all", "show MY OWN profile / my details / what HARI knows about me (профилим, менинг "
            "маълумотларим, мен ҳақимда, мой профиль, обо мне …)"),
+    Action("profile_fix", "all", "something in MY OWN profile should be changed or is wrong (my name, position, "
+           "department, manager, working hours…)", '{"text": what they wrote about it, copied, or null}'),
+    Action("profile_history", "all", "the history of changes made to a profile card (mine, or for HR and owners "
+           "someone else's)", '{"who": employee code, or "me"}'),
     Action("set_language", "all", "change the language HARI writes to me in", '{"lang": "uz_cyrl"|"uz_latn"|"ru"}'),
     Action("forget", "all", "erase what HARI remembers of our chat"),
     Action("queue", "work", "my work queue: step results and HR requests waiting for me"),
@@ -85,8 +90,11 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
     Action("staff_list", "hr", "the list of employees"),
     Action("employee_profile", "hr", "show ANOTHER employee's card (never the person's own: that is my_profile)",
            '{"who": employee code}'),
-    Action("employee_edit", "hr", "change an employee's full name, position or department",
-           '{"who": employee code, "field": "name"|"position"|"department", "value": the new value, copied, or null}'),
+    Action("employee_edit", "hr", "change one or more things on a card, someone else's or the person's OWN: full "
+           "name, position, department, manager, mentor, start date, working hours, working days, language",
+           '{"who": employee code, or "me" for their own card, "changes": [{"field": one of ' + "|".join(PROFILE_KEYS)
+           + ', "value": the new value copied word for word from the message (for manager or mentor: that '
+           'the code given for that person), or null}]}'),
     Action("reinvite", "hr", "a new one-time invite link for an employee", '{"who": employee code}'),
     Action("add_person", "hr", "make someone who opened HARI without a card an employee (by their name or "
            "Telegram ID)", '{"tg": the Telegram ID number, or null when they are named}'),
@@ -286,15 +294,20 @@ def own_profile(raw: str, words: str) -> Intent | None:
     Another person's name or code in the message makes it someone else's card, decided elsewhere."""
     if case_number(raw) or app_number(raw) or employee_code(raw):
         return None
+    from hari import profile  # here: profile reads the database models
+
+    if profile.says_change(raw):  # «исмимни … қил», «лавозимим: …», «мой отдел: …»
+        return Intent("profile_fix", {"text": raw.strip()})
+    if _has(words, "тарих", "истори") and _has(words, *_OWN, *_PROFILE, "ўзгариш", "изменени"):
+        return Intent("profile_history", {})  # whose: the handler sees a name in the message, else one's own
     mine = _has(words, *_OWN) or (_has(words, *_MINE) and _has(words, *_PROFILE))
     alone = words in {_norm(w) for w in ("профил", "профиль", "profile", "профилни кўрсат", "профилни очиш")}
     if not (mine or alone):
         return None
     if len(words.split()) > 5 and not _has(words, "профил", "профиль", "profile"):
         return None  # a longer question about their data ("is my data safe?") is a question, for the AI
-    if _has(words, *_WRONG):  # "my profile is wrong" → a data-fix request in their words
-        return Intent("new_case", {"type": "data_fix", "about": None, "text": after_colon(raw) or raw.strip()},
-                      "keyword")
+    if _has(words, *_WRONG):  # "my profile is wrong / change it": HR and owners change it, others ask HR
+        return Intent("profile_fix", {"text": raw.strip()})
     return Intent("my_profile")
 
 
@@ -364,9 +377,13 @@ def _by_name(raw: str, words: str) -> Intent | None:
         return kw("app_hold", {"number": None})
     if _has(words, "аризасини", "заявку"):
         return kw("app_show", {"number": None})
-    for stem, which in (("лавозим", "position"), ("бўлим", "department"), ("исми", "name")):
-        if _has(words, stem) and ":" in raw:
-            return kw("employee_edit", {"who": None, "field": which, "value": after_colon(raw)})
+    if _has(words, "тарих", "истори") and _has(words, "профил", "ўзгариш", "изменени", "карточк"):
+        return kw("profile_history", {"who": None})
+    from hari import profile
+
+    parsed = profile.parse(raw)
+    if any(c["value"] for c in parsed.changes):  # «Анварнинг лавозими: …, бўлими: …»
+        return kw("employee_edit", {"who": None})
     if _has(words, "ҳавола", "ссылк"):
         return kw("reinvite", {"who": None})
     role = role_in(raw)
@@ -409,9 +426,10 @@ def _with_reference(raw: str, words: str) -> Intent | None:
         if _has(words, "рол", "роль"):
             return Intent("role_change", {"who": code, "role": role_in(CODE_RE.sub(" ", raw))})
         if _has(words, "лавозим", "должност"):
-            return Intent("employee_edit", {"who": code, "field": "position", "value": after_colon(raw)})
+            return Intent("employee_edit", {"who": code, "changes": [{"field": "position", "value": after_colon(raw)}]})
         if _has(words, "бўлим", "отдел"):
-            return Intent("employee_edit", {"who": code, "field": "department", "value": after_colon(raw)})
+            return Intent("employee_edit", {"who": code, "changes": [{"field": "department",
+                                                                     "value": after_colon(raw)}]})
         if _has(words, "ҳавола", "ссылк", "таклиф"):
             return Intent("reinvite", {"who": code})
         if _has(words, "профил", "карточк", "кўрсат", "покажи"):
@@ -521,6 +539,22 @@ def verbatim(span: object, message: str) -> str | None:
 TEXT_ARGS = {"proof", "reason", "text", "basis", "value"}
 
 
+def _changes(items: list, message: str, codes: set[str]) -> list[dict]:
+    """The model's list of card changes, each value checked against what the person really wrote
+    (a manager or mentor may be named by the code the message was given for them)."""
+    out = []
+    for item in items[:9]:
+        if not isinstance(item, dict) or item.get("field") not in PROFILE_KEYS:
+            continue
+        value = item.get("value")
+        if item["field"] in ("manager", "mentor") and isinstance(value, str) and value.strip() in codes:
+            value = value.strip()
+        else:
+            value = verbatim(value, message)
+        out.append({"field": item["field"], "value": value})
+    return out
+
+
 async def route(message: str, names: list[str], context: dict, people: list[tuple[str, str]],
                 history: list[tuple] | None = None, llm: LLMClient | None = None) -> Intent | None:
     """The AI's reading of the message as one of `names`, or None when AI is unavailable or unsure."""
@@ -542,8 +576,11 @@ async def route(message: str, names: list[str], context: dict, people: list[tupl
         return None
     raw_args = reply.data.get("args") if isinstance(reply.data.get("args"), dict) else {}
     args: dict = {}
+    codes = {code for code, _ in people}
     for key, value in raw_args.items():
-        if key in TEXT_ARGS:
+        if key == "changes" and isinstance(value, list):
+            args[key] = _changes(value, message, codes)
+        elif key in TEXT_ARGS:
             args[key] = verbatim(value, message)
         elif isinstance(value, (str, int, bool)) or value is None:
             args[key] = value
