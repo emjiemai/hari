@@ -74,3 +74,19 @@ async def test_a_name_is_fixed_by_writing(h, session_scope):
     async with session_scope() as s:
         assert (await s.execute(select(Employee).where(Employee.telegram_user_id == EMP))).scalar_one().full_name \
             == "Аълоев Анвар Ботирович"
+
+
+@pytest.mark.parametrize("text", ["profilim", "Профилимни кўрсат", "mening ma'lumotlarim", "мен ҳақимда нима биласан",
+                                  "мой профиль", "обо мне", "profil", "менинг карточкам", "men kimman"])
+async def test_every_way_of_asking_shows_ones_own_profile_for_every_role(h, text):
+    for tg, name, other in ((EMP, "Аълоев Анвар", "Кадрова"), (HR, "Кадрова Зайнаб", "Аълоев"),
+                            (OWNER, "Эгаев Улуғ", "Кадрова")):
+        reply = (await h.say(tg, text))[-1]
+        mine = lat(name) if any("a" <= ch <= "z" for ch in text.lower()) else name
+        assert mine in reply and other not in reply and lat(other) not in reply, (tg, text, reply[:80])
+
+
+async def test_someone_elses_card_and_a_fix_request_are_not_ones_own_profile(h, session_scope):
+    assert "Аълоев Анвар" in (await h.say(HR, "Анвар профили"))[0]  # HR asking about someone else
+    replies = await h.say(EMP, "профилимда хато бор: лавозимим нотўғри ёзилган")
+    assert "Профилимдаги хатони тузатиш" in replies[0] and "Тасдиқлайсизми?" in replies[0]

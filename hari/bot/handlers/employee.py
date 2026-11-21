@@ -19,7 +19,7 @@ from hari import cases as C
 from hari import digest, memory, nonresponse
 from hari import intent as I
 from hari import onboarding as O
-from hari.access import can_read_document
+from hari.access import can_manage_employees, can_read_document
 from hari.answer import answer_question, logged_source
 from hari.guard import match_rule
 from hari.bot import texts as T
@@ -485,21 +485,47 @@ LANG_WORDS = {"uz_cyrl": ("кирилл", "кириллда", "ўзбекча к
               "ru": ("рус", "русча", "русский", "по русски", "по-русски", "rus")}
 
 
+ROLE_WORDS = {"employee": "ходим", "manager": "раҳбар", "hr": "HR", "accountant": "бухгалтер", "lawyer": "юрист",
+              "it_admin": "IT админ", "owner": "компания эгаси"}
+DAY_NAMES = ["Ду", "Се", "Чо", "Па", "Жу", "Ша", "Як"]
+
+
 async def my_profile(ctx: Ctx, args: dict) -> None:
+    """The person's own card — the same shape for every role; each person sees only their own."""
     await ctx.state.clear()
     async with session_scope() as session:
         emp = await session.get(Employee, ctx.emp.id)
         manager = await session.get(Employee, emp.manager_id) if emp.manager_id else None
         mentor = await session.get(Employee, emp.mentor_id) if emp.mentor_id else None
+        found = await O.get_plan(session, emp.id)
+        progress = None
+        if found is not None:
+            done, total = O.progress(found)
+            progress = "тугаган" if found.status == "done" else f"{done}/{total} қадам қабул қилинган"
+        open_cases = sum(1 for c in await C.mine(session, emp) if c.status not in ("closed", "rejected"))
     lang = {"uz_cyrl": "ўзбек (кирилл)", "uz_latn": "ўзбек (лотин)", "ru": "рус"}[emp.language]
+    days = ", ".join(DAY_NAMES[int(d)] for d in emp.work_days.split(",") if d.strip().isdigit() and int(d) < 7)
     lines = [
-        f"{emp.full_name}", f"Бўлим: {emp.department}", f"Лавозим: {emp.position}",
-        f"Раҳбар: {manager.full_name if manager else '—'}", f"Мураббий: {mentor.full_name if mentor else '—'}",
-        f"Бошлаш санаси: {emp.start_date:%d.%m.%Y}" if emp.start_date else "Бошлаш санаси: —",
-        f"Иш вақти: {emp.work_start_hour}:00–{emp.work_end_hour}:00", f"Тил: {lang}", "",
-        "Лавозим, раҳбар ва жадвални фақат HR ўзгартиради. Хато бўлса, «профилимда хато бор: …» деб ёзинг.",
-        "Тилни ўзгартириш: «лотинда ёзинг», «кириллда ёзинг» ёки «пишите по-русски».",
+        emp.full_name,
+        f"{emp.position}, {emp.department}" + (f" — {ROLE_WORDS[emp.role]}" if emp.role != "employee" else ""),
+        "",
+        f"Раҳбарингиз: {manager.full_name if manager else '—'}",
+        f"Мураббийингиз: {mentor.full_name if mentor else '—'}",
+        f"Ишга келган сана: {emp.start_date:%d.%m.%Y}" if emp.start_date else "Ишга келган сана: —",
+        f"Иш вақти: {days or '—'}, {emp.work_start_hour}:00–{emp.work_end_hour}:00",
+        f"Мен сизга {lang}да ёзаман",
     ]
+    if progress:
+        lines.append(f"Мослашув: {progress}")
+    if open_cases:
+        lines.append(f"Очиқ мурожаатларингиз: {open_cases} та («мурожаатларим»)")
+    lines.append("")
+    if can_manage_employees(emp):
+        name = emp.full_name.split()[1] if len(emp.full_name.split()) > 1 else emp.full_name
+        lines.append(f"Ўзгартириш: «{name}нинг исми: …», «… лавозими: …», «… бўлими: …».")
+    else:
+        lines.append("Бирор нарса нотўғри бўлса, «профилимда хато бор: …» деб ёзинг — HR тузатади.")
+    lines.append("Тил: «лотинда ёзинг», «кириллда ёзинг» ёки «пишите по-русски».")
     await ctx.say("\n".join(lines))
 
 

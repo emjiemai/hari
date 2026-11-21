@@ -68,7 +68,8 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
            + "|".join(ABOUT) + ' or null, "text": the request in their words, copied, or null}'),
     Action("my_cases", "all", "the status of my HR requests"),
     Action("case_show", "all", "show one HR request by its number", '{"number": "HR-YYYY-MM-NNNN"}'),
-    Action("my_profile", "all", "show my own profile card"),
+    Action("my_profile", "all", "show MY OWN profile / my details / what HARI knows about me (профилим, менинг "
+           "маълумотларим, мен ҳақимда, мой профиль, обо мне …)"),
     Action("set_language", "all", "change the language HARI writes to me in", '{"lang": "uz_cyrl"|"uz_latn"|"ru"}'),
     Action("forget", "all", "erase what HARI remembers of our chat"),
     Action("queue", "work", "my work queue: step results and HR requests waiting for me"),
@@ -82,7 +83,8 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
            '"close": true if they say the matter is fully solved, false if it stays open, null if not said}'),
     Action("new_employee", "hr", "create a new employee card (HARI asks the fields one by one)"),
     Action("staff_list", "hr", "the list of employees"),
-    Action("employee_profile", "hr", "show an employee's card", '{"who": employee code}'),
+    Action("employee_profile", "hr", "show ANOTHER employee's card (never the person's own: that is my_profile)",
+           '{"who": employee code}'),
     Action("employee_edit", "hr", "change an employee's full name, position or department",
            '{"who": employee code, "field": "name"|"position"|"department", "value": the new value, copied, or null}'),
     Action("reinvite", "hr", "a new one-time invite link for an employee", '{"who": employee code}'),
@@ -252,6 +254,9 @@ def direct(text: str) -> Intent | None:
         return Intent(_PHRASES[words])
     if words in _LANG_PHRASES:
         return Intent("set_language", {"lang": _LANG_PHRASES[words]})
+    own = own_profile(raw, words)
+    if own is not None:
+        return own
     found = _with_reference(raw, words)
     if found is not None:
         return found
@@ -264,6 +269,33 @@ def direct(text: str) -> Intent | None:
     if employee_code(bare) and len(bare) <= 7:
         return Intent("employee_profile", {"who": employee_code(bare)})
     return None
+
+
+# Asking for one's own profile, in any of the ways people put it (every role, each sees their own).
+_OWN = ("профилим", "маълумотларим", "карточкам", "анкетам", "мен ҳақимда", "менинг ҳақимда",
+        "ўзим ҳақимда", "мен ҳақида", "мен кимман", "мой профиль", "мой профил", "мои данные",
+        "обо мне", "моя карточка", "моя анкета", "my profile", "about me")
+_MINE = ("менинг", "мени", "ўзимни", "ўзимнинг", "мой", "моя", "мои", "my")
+_PROFILE = ("профил", "маълумот", "карточка", "анкета", "данные", "профиль", "profile")
+_WRONG = ("хато", "нотўғри", "ўзгартир", "тузат", "янгила", "ошибк", "неправил", "исправ", "измени")
+
+
+def own_profile(raw: str, words: str) -> Intent | None:
+    """«профилим», «mening ma'lumotlarim», «мен ҳақимда нима биласан», «мой профиль», «profil» on its own …
+    → the person's own card. «профилимда хато бор: …» is a request to fix it, not a request to see it.
+    Another person's name or code in the message makes it someone else's card, decided elsewhere."""
+    if case_number(raw) or app_number(raw) or employee_code(raw):
+        return None
+    mine = _has(words, *_OWN) or (_has(words, *_MINE) and _has(words, *_PROFILE))
+    alone = words in {_norm(w) for w in ("профил", "профиль", "profile", "профилни кўрсат", "профилни очиш")}
+    if not (mine or alone):
+        return None
+    if len(words.split()) > 5 and not _has(words, "профил", "профиль", "profile"):
+        return None  # a longer question about their data ("is my data safe?") is a question, for the AI
+    if _has(words, *_WRONG):  # "my profile is wrong" → a data-fix request in their words
+        return Intent("new_case", {"type": "data_fix", "about": None, "text": after_colon(raw) or raw.strip()},
+                      "keyword")
+    return Intent("my_profile")
 
 
 def _has(words: str, *stems: str) -> bool:
