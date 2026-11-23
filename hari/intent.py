@@ -45,7 +45,7 @@ PROFILE_KEYS = ("name", "position", "department", "manager", "mentor", "start_da
 @dataclass(frozen=True)
 class Action:
     name: str
-    who: str  # all | work (accepts steps, handles requests) | hr (manages people) | owner
+    who: str  # all | work (accepts steps, handles requests) | lead (gives tasks) | hr (manages people) | owner
     describe: str  # for the model, in English
     args: str = ""  # for the model
 
@@ -114,6 +114,13 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
            "return)", '{"apps": true if applications are meant, "cases": true if HR requests are meant, '
            '"steps": "accept"|"return" if step results are meant, else null, "delete": true if they want them '
            'deleted / removed rather than just rejected, "text": the reason or answer, copied word for word, or null}'),
+    Action("assign", "lead", "give a colleague a piece of work / tell a named person to do something "
+           "(\"Муслима backend'ни қилсин\", \"Анвар ертагача ҳисоботни топширсин\", \"tell Ali to call the client\"); "
+           "HARI passes it on to that person", '{"who": employee code, "text": the work itself, copied word for word '
+           'from the message without their name, or null}'),
+    Action("task_done", "all", "I finished a task a colleague or my boss gave me (one of my_tasks)",
+           '{"task": ref from my_tasks or null, "text": what I did or a note, word for word, or null}'),
+    Action("tasks", "all", "the tasks I was given and the tasks I gave others, and whether they are done"),
     Action("role_change", "owner", "change an employee's role in HARI",
            '{"who": employee code, "role": one of ' + "|".join(ROLES) + "}"),
 ]}
@@ -132,7 +139,8 @@ def allowed(action: str, role: str, works: bool, manages: bool) -> bool:
     a = ACTIONS.get(action)
     if a is None:
         return False
-    return {"all": True, "work": works, "staff": works or manages, "hr": manages, "owner": role == "owner"}[a.who]
+    return {"all": True, "work": works, "staff": works or manages, "lead": manages or role == "manager",
+            "hr": manages, "owner": role == "owner"}[a.who]
 
 
 # --------------------------------------------------------------------------- references in the text
@@ -220,6 +228,8 @@ for _action, _words in {
     "staff_list": ("ходимлар", "ходимлар рўйхати", "сотрудники", "список сотрудников"),
     "new_employee": ("янги ходим", "янги ходим қўшиш", "ходим қўшиш", "новый сотрудник"),
     "applications": ("аризалар", "номзодлар", "янги аризалар", "заявки на работу", "кандидаты"),
+    "tasks": ("топшириқлар", "топшириқларим", "вазифаларим", "вазифалар", "берилган вазифалар",
+              "берган топшириқларим", "мои задачи", "задачи", "поручения"),
     "forget": ("унут", "суҳбатни унут", "ҳаммасини унут", "забудь"),
     "source": ("манба", "манбаси", "манбаси қаерда", "манбаси қани", "манбасини айт", "манбасини айтинг",
                "манбаси нима", "манбаси қанақа", "қаердан олдинг", "қаердан олдингиз", "қаердан билдинг",

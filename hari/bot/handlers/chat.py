@@ -27,7 +27,7 @@ from hari.bot import commands
 from hari.bot import texts as T
 from hari.bot.common import handles_work, staff_by_tg
 from hari.bot.context import Ctx, Pending
-from hari.bot.handlers import employee, hiring, people, staff
+from hari.bot.handlers import employee, hiring, people, staff, tasks
 from hari.config import settings
 from hari.db.models import Employee
 from hari.db.session import session_scope
@@ -37,7 +37,7 @@ from hari.worktime import now_utc
 
 router = Router(name="chat")
 
-EXECUTORS = {**employee.ACTIONS, **staff.ACTIONS, **people.ACTIONS, **hiring.ACTIONS}
+EXECUTORS = {**employee.ACTIONS, **staff.ACTIONS, **people.ACTIONS, **hiring.ACTIONS, **tasks.ACTIONS}
 assert set(EXECUTORS) == set(I.ACTIONS), set(I.ACTIONS) ^ set(EXECUTORS)
 
 APPLY_WORDS = ("ариза", "ишга кир", "ишга жойлаш", "иш излаяпман", "иш қидир", "вакансия", "работ", "заявк",
@@ -77,6 +77,9 @@ async def _ai_reading(ctx: Ctx) -> I.Intent | None:
         context: dict = {"my_steps": employee.steps_context(await employee.my_steps(session, emp)),
                          "my_cases": [{"number": c.number, "type": c.type, "status": c.status}
                                       for c in await C.mine(session, emp) if c.status not in ("closed", "rejected")]}
+        mine = await tasks.my_tasks_context(session, emp)
+        if mine:
+            context["my_tasks"] = mine
         if ctx.works:
             context |= await staff.queue_context(session, emp)
         if ctx.manages:

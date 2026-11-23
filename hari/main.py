@@ -23,7 +23,7 @@ from loguru import logger
 from hari import scheduler
 from hari.apply.vacancies import seed_vacancies
 from hari.bot import commands, common
-from hari.bot.handlers import apply, chat, employee, hiring, people, staff, start
+from hari.bot.handlers import apply, chat, employee, hiring, people, staff, start, tasks
 from hari.bot.middleware import DedupeMiddleware
 from hari.config import WEBHOOK_PATH, settings
 from hari.db.session import create_schema, ping, session_scope
@@ -53,6 +53,7 @@ def build_dispatcher() -> Dispatcher:
         dp.include_router(people.router)  # newcomer reports and the card forms
         dp.include_router(hiring.router)
         dp.include_router(employee.router)
+        dp.include_router(tasks.router)
         dp.include_router(chat.router)  # last: every typed message no form is waiting for
         _dispatcher = dp
     return _dispatcher

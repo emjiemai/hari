@@ -292,6 +292,22 @@ class ProfileChange(Base):
     how: Mapped[str] = mapped_column(String(20), default="chat")  # chat | language | role
 
 
+class Task(Base):
+    """A piece of work one colleague gives another by writing ("Муслима backend'ни қилсин"). HARI tells the
+    person; when they say it is done, HARI tells whoever gave it. The words are kept encrypted."""
+
+    __tablename__ = "tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    from_id: Mapped[str] = mapped_column(String(36), index=True)
+    to_id: Mapped[str] = mapped_column(String(36), index=True)
+    text: Mapped[str] = mapped_column(EncryptedText)
+    status: Mapped[str] = mapped_column(String(10), default="open")  # open | done
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    done_text: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
+
+
 class AnswerLog(Base):
     """Internal answer passport (spec §30) — without the question or answer text."""
 
