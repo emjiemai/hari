@@ -160,7 +160,7 @@ async def main() -> None:
         common.bot_username = me.username or ""
         logger.info("HARI is running as @{} ({} mode)", common.bot_username, mode)
         dp = build_dispatcher()
-        menu = asyncio.create_task(commands.install(bot))  # noqa: F841 — removes the old Menu button list
+        menu = asyncio.create_task(commands.install(bot))  # noqa: F841 — each person's small menu
         await (run_webhook(bot, dp) if mode == "webhook" else run_polling(bot, dp))
     finally:
         await bot.session.close()

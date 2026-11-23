@@ -23,6 +23,7 @@ from hari import cases as C
 from hari import intent as I
 from hari import memory
 from hari.access import can_manage_employees
+from hari.bot import commands
 from hari.bot import texts as T
 from hari.bot.common import handles_work, staff_by_tg
 from hari.bot.context import Ctx, Pending
@@ -50,6 +51,7 @@ async def ctx_for(message: Message, state: FSMContext, bot: Bot) -> Ctx | None:
         if emp is None:
             return None
         works = await handles_work(session, emp)
+    await commands.refresh(bot, emp, works)  # a new link or a new role: the small menu follows
     file_id = None
     if message.photo:
         file_id = f"photo:{message.photo[-1].file_id}"

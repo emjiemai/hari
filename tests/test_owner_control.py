@@ -153,12 +153,30 @@ def _menus(h: Harness) -> dict[int, list[str]]:
     return menus
 
 
-async def test_the_menu_button_is_removed_for_everyone(h):
+async def test_a_small_menu_for_each_kind_of_person(h):
     from hari.bot import commands
 
     menus = _menus(h)
     await commands.install(h.bot)
-    assert menus[0] == [] and menus[MENTOR] == [] and menus[HR] == [] and menus[OWNER] == []
+    assert menus[0] == []  # no card, no menu
+    assert menus[OWNER] == menus[HR] == ["arizalar", "yangi", "navbat", "xodimlar"]
+    assert menus[MENTOR] == ["reja", "murojaat", "murojaatlarim"]  # «профилим» needs no slash
+    assert all(len(m) <= 4 for m in menus.values())
+    from hari import intent as I
+
+    for command in {c for m in menus.values() for c in m}:  # every one of them is a real command
+        assert I.direct(f"/{command}") is not None, command
+
+
+async def test_the_menu_follows_a_new_role(h):
+    from hari.bot import commands
+
+    menus = _menus(h)
+    await commands.install(h.bot)
+    await h.say(OWNER, "Анварни HR қил")
+    await h.say(OWNER, "ҳа")
+    await h.say(MENTOR, "салом")  # their next message brings the new menu
+    assert menus[MENTOR] == ["arizalar", "yangi", "navbat", "xodimlar"]
 
 
 async def test_slash_commands_still_work_when_typed(h):
