@@ -124,6 +124,8 @@ async def handle(ctx: Ctx) -> None:
         intent = I.Intent("question")  # the fixed safety reply; this text never goes to the router
     if intent is None:
         intent = await _ai_reading(ctx)
+    if intent is None and fallback is None:
+        intent = await tasks.asked_task(ctx)  # no AI: the answer to "how is it going?"
     if intent is None:
         intent = fallback or I.Intent("question")
     if ctx.file_id and intent.action == "step_done":

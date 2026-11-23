@@ -97,3 +97,90 @@ def test_who_may_give_work():
     assert I.allowed("assign", "manager", True, False)
     assert not I.allowed("assign", "employee", True, False)  # a mentor gives steps, not orders
     assert I.allowed("task_done", "employee", False, False) and I.allowed("tasks", "employee", False, False)
+
+
+# --------------------------------------------------------------------------- how is it going, and 20:00
+
+async def _give(session_scope, at, text="backend'ни қилсин") -> str:
+    from hari.employees import by_telegram
+
+    async with session_scope() as s:
+        task = Task(from_id=(await by_telegram(s, OWNER)).id, to_id=(await by_telegram(s, MENTOR)).id, text=text, at=at)
+        s.add(task)
+        await s.flush()
+        return task.id
+
+
+async def test_hari_asks_how_it_is_going_once_a_day_in_work_hours(h, session_scope):
+    from datetime import date
+
+    from hari import taskwatch
+    from hari.db.models import OutboundMessage
+    from tests.conftest import at_tashkent
+
+    monday = date(2026, 11, 9)
+    await _give(session_scope, at_tashkent(monday, 9))
+    async with session_scope() as s:
+        assert await taskwatch.check_ins(s, at_tashkent(monday, 11)) == []  # too soon
+        assert len(await taskwatch.check_ins(s, at_tashkent(monday, 12, 30))) == 1
+        assert await taskwatch.check_ins(s, at_tashkent(monday, 16)) == []  # once a day
+        assert await taskwatch.check_ins(s, at_tashkent(date(2026, 11, 10), 7)) == []  # before their hours
+        assert len(await taskwatch.check_ins(s, at_tashkent(date(2026, 11, 10), 10))) == 1  # the next day
+        msg = (await s.execute(select(OutboundMessage).where(OutboundMessage.kind == "task_check"))).scalars().first()
+        assert "«backend'ни қилсин» топшириғи қандай кетяпти?" in msg.text and "Эгаси Шахзод" in msg.text
+
+
+async def test_the_answer_is_kept_with_ai_and_without(h, session_scope, monkeypatch):
+    from datetime import date
+
+    from hari import taskwatch
+    from hari.db.models import TaskUpdate
+    from tests.conftest import at_tashkent
+
+    await _give(session_scope, at_tashkent(date(2026, 11, 9), 9))
+    async with session_scope() as s:
+        await taskwatch.check_ins(s, at_tashkent(date(2026, 11, 9), 13))
+    router = use_router(monkeypatch, {"action": "task_status", "args": {"task": "T1", "text": "ярмини қилдим"}})
+    await h.say(MENTOR, "ярмини қилдим")
+    assert "hari_asked_how_it_is_going" in router.prompts[0]
+    assert "Ёзиб қўйдим. Эгаси Шахзодга кечқурун айтаман." in h.to(MENTOR)[-1]
+    assert not any("ярмини" in t for t in h.to(OWNER))  # not now: in the evening
+
+    from datetime import timedelta
+
+    from hari.worktime import now_utc
+
+    async with session_scope() as s:  # HARI asks again later
+        (task,) = (await s.execute(select(Task))).scalars()
+        task.asked_at = now_utc() + timedelta(seconds=1)  # Windows clock steps are ~16 ms
+    use_router(monkeypatch)  # the AI is down: the answer to HARI's question is still kept
+    await h.say(MENTOR, "API тайёр, эртага тестлайман")
+    async with db.session_scope() as s:
+        texts = [u.text for u in (await s.execute(select(TaskUpdate).order_by(TaskUpdate.at))).scalars()]
+    assert texts == ["ярмини қилдим", "API тайёр, эртага тестлайман"]
+
+
+async def test_the_giver_hears_at_eight_in_the_evening(h, session_scope):
+    from datetime import date
+
+    from hari import taskwatch
+    from hari.db.models import OutboundMessage, TaskUpdate
+    from tests.conftest import at_tashkent
+
+    monday = date(2026, 11, 9)
+    first = await _give(session_scope, at_tashkent(monday, 9))
+    second = await _give(session_scope, at_tashkent(monday, 9), "дизайнни тузат")
+    third = await _give(session_scope, at_tashkent(monday, 9), "мижозга қўнғироқ қил")
+    async with session_scope() as s:
+        s.add(TaskUpdate(task_id=first, text="ярмини қилдим", at=at_tashkent(monday, 15)))
+        done = await s.get(Task, third)
+        done.status, done.done_at = "done", at_tashkent(monday, 16)
+    async with session_scope() as s:
+        assert await taskwatch.evening(s, at_tashkent(monday, 19, 59)) == []
+        assert len(await taskwatch.evening(s, at_tashkent(monday, 20))) == 1
+        assert await taskwatch.evening(s, at_tashkent(monday, 21)) == []  # one report a day
+        msg = (await s.execute(select(OutboundMessage).where(OutboundMessage.kind == "task_report"))).scalar_one()
+    assert "Устозов Анвар: «backend'ни қилсин» — ярмини қилдим (15:00)" in msg.text
+    assert "«дизайнни тузат» — ҳали ҳеч нарса ёзмади" in msg.text
+    assert "«мижозга қўнғироқ қил» — бажарилди (16:00)" in msg.text
+    assert second

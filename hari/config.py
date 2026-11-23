@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     # Owner digest, Tashkent time "HH:MM" (§20). Weekly report: Friday at this time.
     owner_digest_time: str = "17:30"
     weekly_report_time: str = "16:00"
+    # Tasks one colleague gives another: HARI asks the person how it is going this many hours after the
+    # last news (within their work hours, at most once a day), and tells each giver at this time.
+    task_check_hours: int = 3
+    task_report_time: str = "20:00"
     # A group smaller than this is never broken out in a report (§20, T28).
     min_group_size: int = 5
     # Minutes an approval stays valid (§25 "Approval token").

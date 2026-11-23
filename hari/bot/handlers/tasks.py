@@ -2,7 +2,9 @@
 
 Owners, HR and managers give it: HARI finds the person by name, says once what it will send and waits
 for «ҳа», then tells that person and keeps the task. When the person says it is done ("backend'ни
-бажардим"), HARI tells whoever gave it. "Топшириқлар" shows both sides.
+бажардим"), HARI tells whoever gave it. What they say about how it is going ("ярмини қилдим") is kept
+and goes to the giver in the evening report (hari.taskwatch, which also asks them how it is going).
+"Топшириқлар" shows both sides.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from hari.agenda import given_name
 from hari.bot import texts as T
 from hari.bot.context import Ctx, ask_confirm, ask_pick
 from hari.bot.ui import notify
-from hari.db.models import Employee, Task
+from hari.db.models import Employee, Task, TaskUpdate, as_utc
 from hari.db.session import session_scope
 from hari.translit import cyrillic_to_latin, latin_to_cyrillic, normalize
 from hari.worktime import fmt, now_utc
@@ -140,13 +142,72 @@ async def _open_for(session, emp: Employee) -> list[Task]:  # noqa: ANN001
                                        .order_by(Task.at))).scalars())
 
 
+async def _waiting_answer(session, task: Task) -> bool:  # noqa: ANN001
+    """HARI asked how it is going and the person has not said anything about it since."""
+    if task.asked_at is None:
+        return False
+    from hari.taskwatch import last_update
+
+    update = await last_update(session, task)
+    return update is None or as_utc(update.at) < as_utc(task.asked_at)
+
+
 async def my_tasks_context(session, emp: Employee) -> list[dict]:  # noqa: ANN001
     """The tasks waiting for this person, for the AI router (refs T1, T2…; the words masked)."""
     out = []
     for n, task in enumerate(await _open_for(session, emp), start=1):
         giver = await session.get(Employee, task.from_id)
-        out.append({"ref": f"T{n}", "task": egress.outbound(task.text[:120]), "from": giver.code if giver else None})
+        row = {"ref": f"T{n}", "task": egress.outbound(task.text[:120]), "from": giver.code if giver else None}
+        if await _waiting_answer(session, task):
+            row["hari_asked_how_it_is_going"] = True
+        out.append(row)
     return out
+
+
+async def asked_task(ctx: Ctx) -> I.Intent | None:
+    """Without AI: HARI asked about exactly one task and the message is no command → it is the answer."""
+    async with session_scope() as session:
+        asked = [t for t in await _open_for(session, ctx.emp) if await _waiting_answer(session, t)]
+    if len(asked) != 1 or not _clean(ctx.text):
+        return None
+    return I.Intent("task_status", {"task_id": asked[0].id, "text": ctx.text}, "keyword")
+
+
+def _chosen(open_: list[Task], args: dict) -> Task | None:
+    if args.get("task_id"):
+        return next((t for t in open_ if t.id == args["task_id"]), None)
+    ref = re.fullmatch(r"[TТ](\d{1,2})", str(args.get("task") or "").strip(), re.IGNORECASE)
+    if ref and 1 <= int(ref.group(1)) <= len(open_):
+        return open_[int(ref.group(1)) - 1]
+    return open_[0] if len(open_) == 1 else None
+
+
+async def task_status(ctx: Ctx, args: dict) -> None:
+    async with session_scope() as session:
+        open_ = await _open_for(session, ctx.emp)
+        chosen = _chosen(open_, args)
+        if chosen is None and not args.get("task_id"):
+            asked = [t for t in open_ if await _waiting_answer(session, t)]
+            chosen = asked[0] if len(asked) == 1 else None
+    if not open_:
+        await ctx.say("Сизда очиқ топшириқ йўқ.")
+        return
+    if chosen is None:
+        await ask_pick(ctx, "Қайси топшириқ ҳақида?", "task_status",
+                       {k: v for k, v in args.items() if k != "task"}, "task_id",
+                       [(t.id, t.text[:80]) for t in open_[:10]])
+        return
+    note = _clean(args.get("text")) or _clean(ctx.text)
+    if not note:
+        await ctx.say(f"«{chosen.text}» қандай кетяпти?")
+        return
+    async with session_scope() as session:
+        session.add(TaskUpdate(task_id=chosen.id, text=note))
+        await audit.record(session, "task.status", "kept", actor_id=ctx.emp.id, object_type="task",
+                           object_id=chosen.id)
+        giver = await session.get(Employee, chosen.from_id)
+    who = f"{giver.full_name}га" if giver else "Топшириқ берган кишига"
+    await ctx.say(f"Ёзиб қўйдим. {who} кечқурун айтаман.")
 
 
 async def task_done(ctx: Ctx, args: dict) -> None:
@@ -157,14 +218,7 @@ async def task_done(ctx: Ctx, args: dict) -> None:
 
         await employee.step_done(ctx, {"step": None, "proof": args.get("text")})
         return
-    chosen = None
-    if args.get("task_id"):
-        chosen = next((t for t in open_ if t.id == args["task_id"]), None)
-    ref = re.fullmatch(r"[TТ](\d{1,2})", str(args.get("task") or "").strip(), re.IGNORECASE)
-    if chosen is None and ref and 1 <= int(ref.group(1)) <= len(open_):
-        chosen = open_[int(ref.group(1)) - 1]
-    if chosen is None and len(open_) == 1:
-        chosen = open_[0]
+    chosen = _chosen(open_, args)
     if chosen is None:
         await ask_pick(ctx, "Қайси топшириқни бажардингиз?", "task_done",
                        {k: v for k, v in args.items() if k != "task"}, "task_id",
@@ -200,4 +254,4 @@ async def tasks(ctx: Ctx, args: dict) -> None:
     await ctx.say("\n".join(lines) if lines else "Очиқ топшириқ йўқ.")
 
 
-ACTIONS = {"assign": assign, "task_done": task_done, "tasks": tasks}
+ACTIONS = {"assign": assign, "task_done": task_done, "task_status": task_status, "tasks": tasks}

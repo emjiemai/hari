@@ -120,6 +120,9 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
            'from the message without their name, or null}'),
     Action("task_done", "all", "I finished a task a colleague or my boss gave me (one of my_tasks)",
            '{"task": ref from my_tasks or null, "text": what I did or a note, word for word, or null}'),
+    Action("task_status", "all", "how a task I was given is going: progress, a problem, when it will be ready "
+           "(often the answer to HARI asking about one of my_tasks)",
+           '{"task": ref from my_tasks or null, "text": what they said about it, word for word}'),
     Action("tasks", "all", "the tasks I was given and the tasks I gave others, and whether they are done"),
     Action("role_change", "owner", "change an employee's role in HARI",
            '{"who": employee code, "role": one of ' + "|".join(ROLES) + "}"),

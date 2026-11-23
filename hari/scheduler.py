@@ -12,6 +12,8 @@ What a tick does (every minute, all times Asia/Tashkent):
 - the no-reply rule (hari/nonresponse.py): one reminder at 120 work minutes, the manager at 240,
   the owner's digest at 480;
 - the owner's digest once a day after OWNER_DIGEST_TIME, the weekly report on Friday;
+- tasks colleagues gave each other: "how is it going?" to the person, the evening report to the giver
+  (hari.taskwatch);
 - IT is told once when an outside source or the AI budget stops;
 - retention (only in live mode with an approved policy).
 HARI_PAUSED=true stops all of it (the kill switch, T23).
@@ -33,7 +35,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hari import agenda, budget, digest, integrations, memory, nonresponse, retention, voice
+from hari import agenda, budget, digest, integrations, memory, nonresponse, retention, taskwatch, voice
 from hari.access import is_staff
 from hari.bot import texts as T
 from hari.config import settings
@@ -245,6 +247,8 @@ async def tick(bot: Bot, now: datetime | None = None) -> int:
         ids += await system_alerts(session, now)
         ids += await digest.daily(session, now)
         ids += await digest.weekly(session, now)
+        ids += await taskwatch.check_ins(session, now)
+        ids += await taskwatch.evening(session, now)
         purged = await retention.run(session, now)
         reports = await unreported(session, now)
     if purged:

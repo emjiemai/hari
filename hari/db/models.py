@@ -306,6 +306,19 @@ class Task(Base):
     status: Mapped[str] = mapped_column(String(10), default="open")  # open | done
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     done_text: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
+    asked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # "how is it going?"
+
+
+class TaskUpdate(Base):
+    """What the person said about how a task is going. Kept (encrypted) and told to whoever gave the task
+    in the evening report."""
+
+    __tablename__ = "task_updates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    task_id: Mapped[str] = mapped_column(String(36), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    text: Mapped[str] = mapped_column(EncryptedText)
 
 
 class AnswerLog(Base):
