@@ -65,10 +65,6 @@ class CaseAnswer(StatesGroup):
     close = State()
 
 
-class CloseAll(StatesGroup):
-    reason = State()
-
-
 def _numbered(items: list[str]) -> str:
     return "\n".join(f"{i}. {label}" for i, label in enumerate(items, start=1))
 
@@ -654,113 +650,174 @@ async def _send_answer(message: Message, bot: Bot, tg: int, number: str, text: s
 
 # --------------------------------------------------------------------------- all at once
 
-async def _all_open(me: Employee, apps: bool, cases: bool) -> tuple[list[str], list[str]]:
-    """(case numbers this person holds, ids of applications waiting for a decision)."""
+DEFAULT_BASIS = "Раҳбарият қарори: ҳаммаси бирга кўриб чиқилди."
+DEFAULT_ANSWER = "Мурожаатингиз кўриб чиқилди ва ёпилди."
+DEFAULT_RETURN = "Қайта кўриб чиқиб, яна юборинг."
+SHOWN = 8  # names listed in the question; the rest are counted
+
+
+async def _everything(me: Employee, args: dict) -> dict:
+    """What «ҳаммасини …» covers for this person right now, as ids (kept until «ҳа»):
+    cases they hold, applications waiting for a decision, applications whose data can be deleted,
+    step results waiting for them."""
     from hari.apply.applications import DECISIONS
 
+    out: dict = {"cases": [], "reject": [], "delete": [], "steps": [], "step_mode": None}
     async with session_scope() as session:
         me = await session.get(Employee, me.id)
-        held = [c.number for c in await C.open_for_handler(session, me)
-                if c.assignee_id == me.id or (c.assignee_id is None and me.role in ("hr", "owner"))] if cases else []
-        waiting = []
-        if apps and can_manage_employees(me):
-            waiting = list((await session.execute(select(Application.id).where(
+        if args.get("cases"):
+            out["cases"] = [c.number for c in await C.open_for_handler(session, me)
+                            if c.assignee_id == me.id or (c.assignee_id is None and me.role in ("hr", "owner"))]
+        if args.get("apps") and can_manage_employees(me):
+            if args.get("delete"):  # gone from every list: the data is removed, the number and decision stay
+                rows = (await session.execute(select(Application.id).where(
+                    Application.status.in_(("submitted", "interview", "rejected", "withdrawn")),
+                    Application.purged_at.is_(None), Application.legal_hold.is_not(True)))).scalars()
+                out["delete"] = list(rows)
+            out["reject"] = list((await session.execute(select(Application.id).where(
                 Application.status.in_(DECISIONS["reject"])))).scalars())
-    return held, waiting
+        if args.get("steps") in ("accept", "return"):
+            out["steps"] = [s.id for _, s, _ in await agenda.queue_steps(session, me)]
+            out["step_mode"] = args["steps"]
+    return out
 
 
-def _what(n_cases: int, n_apps: int) -> str:
-    parts = []
-    if n_cases:
-        parts.append(f"{n_cases} та мурожаатни жавоб бериб ёпаман")
-    if n_apps:
-        parts.append(f"{n_apps} та аризани рад этаман (номзодларга одатдаги хушмуомала жавоб боради)")
-    return " ва ".join(parts)
+async def _names(found: dict) -> dict[str, list[str]]:
+    async with session_scope() as session:
+        cases = [(await C.get_by_number(session, n)) for n in found["cases"]]
+        case_names = []
+        for case in cases:
+            if case is not None:
+                who = await session.get(Employee, case.requester_id)
+                case_names.append(f"{who.full_name if who else '—'} — {case.title}")
+        apps = {a.id: a.full_name for a in (await session.execute(select(Application).where(
+            Application.id.in_(set(found["reject"]) | set(found["delete"]))))).scalars()} \
+            if found["reject"] or found["delete"] else {}
+        steps = []
+        for step_id in found["steps"]:
+            step = await session.get(OnboardingStep, step_id)
+            plan = await session.get(OnboardingPlan, step.plan_id) if step else None
+            owner = await session.get(Employee, plan.employee_id) if plan else None
+            if step and owner:
+                steps.append(f"{owner.full_name} — {step.title}")
+    return {"cases": case_names, "apps": [apps[i] for i in dict.fromkeys(found["delete"] or found["reject"])
+                                          if apps.get(i)], "steps": steps}
+
+
+def _listed(title: str, names: list[str]) -> list[str]:
+    if not names:
+        return []
+    more = f"\n  … яна {len(names) - SHOWN} та" if len(names) > SHOWN else ""
+    return [title + "\n" + "\n".join(f"• {n}" for n in names[:SHOWN]) + more]
 
 
 async def close_all(ctx: Ctx, args: dict) -> None:
-    """«ҳаммасини рад эт / ёп»: every waiting application rejected and every held request closed, with one
-    reason the person writes (a rejection is never recorded without one — spec 2.0 §14)."""
-    if "case_numbers" in args:
-        held, waiting = args["case_numbers"], args["app_ids"]
-    else:
-        held, waiting = await _all_open(ctx.emp, bool(args.get("apps")), bool(args.get("cases")))
-    if not held and not waiting:
-        await ctx.say("Ҳозир ёпадиган ёки рад этадиган ҳеч нарса йўқ.")
+    """«ҳаммасини рад эт / ёп / ўчир / қабул қил»: everything of that kind at once. HARI lists what it will
+    do and does it on one «ҳа». A reason written with it («…: сабаб») is used; otherwise a plain one is."""
+    if "found" in args:
+        if ctx.confirmed:
+            await _do_close_all(ctx, args["found"], args.get("text"))
         return
+    found = await _everything(ctx.emp, args)
+    if not any(found[k] for k in ("cases", "reject", "delete", "steps")):
+        if args.get("steps") is None and not (args.get("apps") or args.get("cases")):
+            await ctx.say("Нимани — аризаларними, мурожаатларними ёки мослашув натижаларини?")
+        else:
+            await ctx.say("Ҳозир бундай нарса йўқ — ҳаммаси ҳал бўлган.")
+        return
+    names = await _names(found)
+    parts = []
+    if found["delete"]:
+        parts += _listed(f"{len(names['apps'])} та аризани ўчираман (шахсий маълумоти ўчади, ариза рақами ва "
+                         "қарор қолади; кутаётганларга рад жавоби боради):", names["apps"])
+    elif found["reject"]:
+        parts += _listed(f"{len(found['reject'])} та аризани рад этаман (номзодларга хушмуомала жавоб боради):",
+                         names["apps"])
+    if found["cases"]:
+        parts += _listed(f"{len(found['cases'])} та мурожаатни жавоб бериб ёпаман:", names["cases"])
+    if found["steps"]:
+        verb = "қабул қиламан" if found["step_mode"] == "accept" else "тузатишга қайтараман"
+        parts += _listed(f"{len(found['steps'])} та мослашув натижасини {verb}:", names["steps"])
     text = args.get("text")
-    if not text:
-        await ctx.state.set_state(CloseAll.reason)
-        await ctx.state.update_data(close_all={"case_numbers": held, "app_ids": waiting})
-        uses = []
-        if waiting:
-            uses.append("аризаларда рад этиш асоси бўлиб сақланади")
-        if held:
-            uses.append("мурожаат эгаларига жавоб бўлиб боради")
-        await ctx.say(f"{_what(len(held), len(waiting)).capitalize()}. Битта сабаб ёзинг — у " + " ва ".join(uses)
-                      + ". Ёзсангиз, ҳаммасини бажараман; бекор қилиш: «бекор».")
-        return
-    if not ctx.confirmed:
-        await ask_confirm(ctx, f"{_what(len(held), len(waiting)).capitalize()}. Сабаб: «{text}».", "close_all",
-                          {"case_numbers": held, "app_ids": waiting, "text": text})
-        return
-    await _do_close_all(ctx.message, ctx.bot, ctx.tg, held, waiting, text)
+    if text:
+        parts.append(f"Сабаб / жавоб: «{text}»")
+    await ask_confirm(ctx, "\n\n".join(parts), "close_all", {"found": found, "text": text})
 
 
-@router.message(CloseAll.reason, F.text)
-async def close_all_reason(message: Message, state: FSMContext, bot: Bot) -> None:
-    data = (await state.get_data()).get("close_all") or {}
-    await state.clear()
-    if _cancelled(message) or not message.text.strip():
-        await message.answer(T.CANCELLED)
-        return
-    await _do_close_all(message, bot, message.from_user.id, data.get("case_numbers", []), data.get("app_ids", []),
-                        " ".join(message.text.split()))
-
-
-async def _do_close_all(message: Message, bot: Bot, tg: int, numbers: list[str], app_ids: list[str],
-                        text: str) -> None:
+async def _do_close_all(ctx: Ctx, found: dict, text: str | None) -> None:
+    from hari import retention
     from hari.apply import applications as A
     from hari.apply.texts import t as applicant_text
 
-    closed, rejected, skipped = 0, 0, 0
+    counts = {"closed": 0, "rejected": 0, "deleted": 0, "accepted": 0, "returned": 0, "skipped": 0}
     told: list[tuple[Employee, str]] = []
-    to_applicants: list[Application] = []
+    to_applicants: list[tuple[int, str]] = []
     async with session_scope() as session:
-        me = await staff_by_tg(session, tg)
-        if me is None:
-            return
-        for number in numbers:
+        me = await session.get(Employee, ctx.emp.id)
+        for number in found.get("cases", []):
             case = await C.get_by_number(session, number)
             try:
-                await C.answer(session, me, case, text, True)
+                await C.answer(session, me, case, text or DEFAULT_ANSWER, True)
             except (C.CaseError, AttributeError):
-                skipped += 1
+                counts["skipped"] += 1
                 continue
-            closed += 1
+            counts["closed"] += 1
             requester = await session.get(Employee, case.requester_id)
             told.append((requester, f"«{case.title}» мурожаатингизга жавоб ({me.full_name}):\n{case.decision}\n\n"
                                     "Мурожаат ёпилди. Эътирозингиз бўлса, шу ерга ёзинг."))
-        if app_ids and can_manage_employees(me):
-            for app_id in app_ids:
-                decision = await A.decide(session, app_id, me, "reject", basis=text)
+        if can_manage_employees(me):
+            for app_id in found.get("reject", []):
+                decision = await A.decide(session, app_id, me, "reject", basis=text or DEFAULT_BASIS)
+                app = await session.get(Application, app_id)
                 if decision.ok:
-                    rejected += 1
-                    to_applicants.append(await session.get(Application, app_id))
-                else:
-                    skipped += 1
-    for person, note in told:
-        await notify(bot, person, note)
-    for app in to_applicants:
-        await tell_applicant(bot, app, applicant_text(app.language, "msg_reject"))
-    done = []
-    if closed:
-        done.append(f"{closed} та мурожаат ёпилди")
-    if rejected:
-        done.append(f"{rejected} та ариза рад этилди")
-    if skipped:
-        done.append(f"{skipped} таси бу орада бошқа одам томонидан ҳал қилинган экан")
-    await message.answer(T.say(me, (", ".join(done) or "Ҳеч нарса ўзгармади") + "."))
+                    counts["rejected"] += 1
+                    if app.telegram_user_id:
+                        to_applicants.append((app.telegram_user_id, applicant_text(app.language, "msg_reject")))
+                elif app_id not in found.get("delete", []):
+                    counts["skipped"] += 1
+            for app_id in found.get("delete", []):
+                app = await session.get(Application, app_id)
+                try:
+                    await retention.delete_now(session, app, me)
+                    counts["deleted"] += 1
+                except retention.RetentionError:
+                    counts["skipped"] += 1
+        decided: list[tuple[OnboardingStep, Employee]] = []
+        for step_id in found.get("steps", []):
+            accept = found.get("step_mode") == "accept"
+            try:
+                step, owner = await O.decide(session, me, step_id, accept=accept,
+                                             reason=None if accept else (text or DEFAULT_RETURN))
+            except O.StepError:
+                counts["skipped"] += 1
+                continue
+            counts["accepted" if accept else "returned"] += 1
+            decided.append((step, owner))
+        step_notes = []
+        for step, owner in decided:
+            if found.get("step_mode") == "accept":
+                plan = await O.get_plan(session, owner.id)
+                finished = plan is not None and plan.status == "done"
+                upcoming = None if finished else await agenda.next_step(session, owner)
+                step_notes.append((owner, T.STEP_ACCEPTED_TO_EMP.format(title=step.title)
+                                   + (f"\n\n{upcoming}" if upcoming else "") + (f"\n\n{T.PLAN_DONE}" if finished else "")))
+            else:
+                step_notes.append((owner, T.STEP_RETURNED_TO_EMP.format(title=step.title,
+                                                                       reason=step.return_reason or "—")))
+    for person, note in told + step_notes:
+        await notify(ctx.bot, person, note)
+    for chat, note in to_applicants:
+        try:
+            await ctx.bot.send_message(chat, note)
+        except Exception:  # noqa: BLE001 — an applicant who blocked the bot; the decision stands
+            pass
+    words = {"closed": "мурожаат ёпилди", "rejected": "ариза рад этилди", "deleted": "ариза ўчирилди",
+             "accepted": "натижа қабул қилинди", "returned": "натижа қайтарилди",
+             "skipped": "таси бу орада бошқа одам томонидан ҳал қилинган экан"}
+    if found.get("delete"):
+        counts["rejected"] = 0  # deleted ones are told as deleted
+    done = [f"{n} та {words[k]}" if k != "skipped" else f"{n} {words[k]}" for k, n in counts.items() if n]
+    await ctx.say("Бажарилди: " + ", ".join(done) + "." if done else "Ҳеч нарса ўзгармади.")
 
 
 ACTIONS = {

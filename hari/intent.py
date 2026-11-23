@@ -108,10 +108,12 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
            '{"number": application number, "score": 0-4 or null}'),
     Action("app_purge", "hr", "delete an applicant's personal data (they asked for it)", '{"number": application number}'),
     Action("app_hold", "hr", "put a legal hold on an applicant's data", '{"number": application number}'),
-    Action("close_all", "work", "do it for ALL of them at once: reject every job application waiting for a decision "
-           "(HR and owners), and/or answer and close every HR request waiting for me",
-           '{"apps": true if applications are meant, "cases": true if HR requests are meant, '
-           '"text": the reason or answer, copied word for word, or null}'),
+    Action("close_all", "staff", "do it for ALL of them at once (cancel / remove / delete / reject / close / "
+           "accept everything): job applications (reject, or delete when they say delete/remove), the HR requests "
+           "employees wrote that wait for me (answer and close), onboarding step results waiting for me (accept or "
+           "return)", '{"apps": true if applications are meant, "cases": true if HR requests are meant, '
+           '"steps": "accept"|"return" if step results are meant, else null, "delete": true if they want them '
+           'deleted / removed rather than just rejected, "text": the reason or answer, copied word for word, or null}'),
     Action("role_change", "owner", "change an employee's role in HARI",
            '{"who": employee code, "role": one of ' + "|".join(ROLES) + "}"),
 ]}
@@ -130,7 +132,7 @@ def allowed(action: str, role: str, works: bool, manages: bool) -> bool:
     a = ACTIONS.get(action)
     if a is None:
         return False
-    return {"all": True, "work": works, "hr": manages, "owner": role == "owner"}[a.who]
+    return {"all": True, "work": works, "staff": works or manages, "hr": manages, "owner": role == "owner"}[a.who]
 
 
 # --------------------------------------------------------------------------- references in the text
@@ -398,6 +400,38 @@ def _by_name(raw: str, words: str) -> Intent | None:
     return None
 
 
+_ALL = ("ҳамма", "ҳаммаси", "ҳаммасини", "барча", "барчаси", "барчасини", "бари", "барини", "бутун", "все", "всё",
+        "всех", "all")
+_APPS = ("ариза", "номзод", "заявк", "кандидат", "резюме", "application")
+_CASES = ("мурожаат", "сўров", "шикоят", "обращени", "запрос", "жалоб", "request")
+_STEPS = ("натижа", "қадам", "вазифа", "топшириқ", "результат", "шаг", "задани", "отчёт", "отчет")
+_DELETE = ("ўчир", "олиб ташла", "тозала", "удали", "удалить", "убери", "очисти", "delete", "remove")
+_CANCEL = ("бекор", "отмен", "cancel")
+
+
+def bulk(raw: str, words: str) -> Intent | None:
+    """«ҳаммасини рад эт», «барча аризаларни ўчир», «ҳамма мурожаатларни ёп», «ҳаммасини қабул қил»,
+    «удали все заявки»: everything of a kind at once (asked once with «ҳа» before anything is done)."""
+    if not _has(words, *_ALL):
+        return None
+    apps_named, cases_named, steps_named = _has(words, *_APPS), _has(words, *_CASES), _has(words, *_STEPS)
+    delete, cancel = _has(words, *_DELETE), _has(words, *_CANCEL)
+    reject, close = _has(words, "рад", "отклон", "reject"), _has(words, "ёп", "закр", "close")
+    accept, give_back = _has(words, "қабул", "принят", "прими", "accept"), _has(words, "қайтар", "вернут", "верни")
+    if not (delete or cancel or reject or close or accept or give_back):
+        return None  # «ҳаммасини тушундим», «ҳаммасини кўрсат»: not a bulk action
+    named = apps_named or cases_named or steps_named
+    steps = None
+    if steps_named or (accept and not named):
+        steps = "accept" if accept else "return"
+    apps = apps_named or (not named and (reject or delete or cancel))
+    cases = cases_named or (not named and (close or delete or cancel))
+    if not (apps or cases or steps):
+        return None
+    return Intent("close_all", {"apps": apps, "cases": cases, "steps": steps, "delete": delete and apps,
+                                "text": after_colon(raw)})
+
+
 def _with_reference(raw: str, words: str) -> Intent | None:
     """Short commands built around a number, a code or a Telegram ID, and accept / return."""
     case, app, code = case_number(raw), app_number(raw), employee_code(raw)
@@ -438,11 +472,10 @@ def _with_reference(raw: str, words: str) -> Intent | None:
         tg = telegram_id(raw)
         if tg and _has(words, "ходим қилиб", "қўш", "добав"):
             return Intent("add_person", {"tg": tg})
-    if _has(words, "ҳаммаси", "барчаси", "ҳаммасини", "барчасини", "все", "всех") and not (case or app or code):
-        apps = _has(words, "рад", "отклон", "бекор")
-        cases = _has(words, "ёп", "закр", "бекор")
-        if apps or cases:  # «ҳаммасини рад эт», «ҳаммасини ёп», «ҳаммасини бекор қил»
-            return Intent("close_all", {"apps": apps, "cases": cases, "text": after_colon(raw)})
+    if not (case or app or code):
+        everything = bulk(raw, words)
+        if everything is not None:
+            return everything
     named = None if (case or app or code) else _by_name(raw, words)
     if named is not None:
         return named

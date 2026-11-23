@@ -109,7 +109,7 @@ async def handle(ctx: Ctx) -> None:
         return
 
     intent = I.direct(text)
-    if intent is not None and intent.source == "keyword" \
+    if intent is not None and (intent.source == "keyword" or intent.action == "close_all") \
             and not I.allowed(intent.action, ctx.emp.role, ctx.works, ctx.manages):
         intent = None  # a likely reading that is no command for this person ("қабул" with no queue)
     fallback = None
