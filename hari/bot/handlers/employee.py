@@ -105,11 +105,7 @@ def _plan_text(emp: Employee, plan, today) -> str:  # noqa: ANN001
     if open_steps:
         lines.append("\nБугунги очиқ қадамлар:")
         for n, s in open_steps:
-            if s.kind == "read":
-                lines.append(f"• {n}. {s.title} — ўқиш: «{n} ни очинг», ўқиб бўлгач: «{n} ни ўқидим»")
-            else:
-                lines.append(f"• {n}. {s.title} — бажаргач ёзинг: «{n} ни бажардим: нима қилдингиз» "
-                             "(фото ёки файл ҳам бўлади)")
+            lines.append(f"• {n}. {s.title}")
     return "\n".join(lines)
 
 
@@ -153,7 +149,7 @@ async def _pick_step(ctx: Ctx, args: dict, action: str, kinds: set[str], questio
     if step is not None:
         return step
     if not steps:
-        await ctx.say("Ҳозир бундай очиқ қадамингиз йўқ. Режани кўриш учун «режам» деб ёзинг.")
+        await ctx.say("Ҳозир бундай очиқ қадамингиз йўқ.")
         return None
     await ask_pick(ctx, question, action, args, "step", [(r, s.title) for r, s in steps])
     return None
@@ -174,7 +170,7 @@ async def read_doc(ctx: Ctx, args: dict) -> None:
             .order_by(KnowledgeChunk.position)
         )).scalars().all()
     body = "\n\n".join(f"{c.section}\n{c.text}" if c.section != doc.title else c.text for c in chunks)
-    await ctx.say(f"{doc.title}, {doc.version}-версия\n\n{body}"[:3600] + "\n\nЎқиб бўлгач, «ўқидим» деб ёзинг.")
+    await ctx.say(f"{doc.title}, {doc.version}-версия\n\n{body}"[:3600])
 
 
 async def step_read(ctx: Ctx, args: dict) -> None:
@@ -400,7 +396,7 @@ async def open_and_tell(message: Message, bot: Bot, telegram_user_id: int, case_
                 for person in await _any_hr(session):
                     if C.can_handle_case(person, None, case.about_employee_id, case.about_role):
                         await notify(bot, person, f"⚠️ {emp.full_name}нинг «{case.title}» мурожаати учун масъул "
-                                                  "топилмади. Кўриш учун «иш навбати» деб ёзинг.")
+                                                  "топилмади.")
                 await digest.add(session, f"unassigned:{case.id}", "unassigned", priority=20,
                                  fact=f"«{case.title}» мурожаати учун масъул топилмади.",
                                  impact="Мурожаат эгасиз қолди: биринчи жавоб муддати ўтиши мумкин.",

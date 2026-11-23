@@ -168,7 +168,7 @@ async def test_deletion_request_is_decided_by_a_person(h_apply_done, session_sco
     assert "«маълумотимни ўчиринг»" in (await h.say(APPLICANT, "салом"))[0]  # the status reply says how
     replies = await h.say(APPLICANT, "маълумотимни ўчиринг")
     assert "HR масъули кўриб чиқади" in replies[0]
-    assert "ўчиришни сўради" in h.to(A_HR)[-1] and "маълумотини ўчир»" in h.to(A_HR)[-1]
+    assert "ўчиришни сўради" in h.to(A_HR)[-1] and "маълумотини ўчир»" not in h.to(A_HR)[-1]
     assert "аллақачон" in (await h.say(APPLICANT, "маълумотимни ўчиринг"))[0]
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()

@@ -166,8 +166,6 @@ async def report_stranger(bot: Bot, user: User, why: str = "") -> None:
         f"Вақт: {fmt(now_utc())}",
         f"Ишга ариза: {applied}",
         "",
-        f"Ходимингиз бўлса, «{given_name(name) or name}ни ходим қилиб қўш» деб ёзинг: лавозими, исми, бўлими ва "
-        "роли сўралади. "
         "Танимасангиз, ҳеч нарса қилманг — унинг ҳеч қандай ҳуқуқи йўқ.",
     ])
     for owner in targets:

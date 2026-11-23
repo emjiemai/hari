@@ -128,13 +128,13 @@ async def test_full_onboarding_journey(h):
 
     # the plan, a read step, and a meeting step needing the mentor
     replies = await h.say(NEW, "📋 Режам")  # old menu label
-    assert "Мослашув режаси — 0/" in replies[0] and "1 ни ўқидим" in replies[0]
+    assert "Мослашув режаси — 0/" in replies[0] and "деб ёзинг" not in replies[0]
     assert "танишганингиз қайд этилди" in (await h.say(NEW, "1 ни ўқидим"))[0]
     replies = await h.say(NEW, "Мураббийингиз билан танишув бажардим")
     assert "натижани юборинг" in replies[0]
     replies = await h.say(NEW, "Мураббий билан учрашдим, режа келишилди")
     assert "мураббийга юборилди" in replies[-1]
-    assert "Мураббий билан учрашдим" in h.to(MENTOR)[-1] and "«қабул»" in h.to(MENTOR)[-1]
+    assert "Мураббий билан учрашдим" in h.to(MENTOR)[-1] and "«қабул»" not in h.to(MENTOR)[-1]
 
     # nobody but the mentor (or HR) can accept; the mentor accepts by writing, then confirms
     await h.say(STRANGER, "қабул")
@@ -151,7 +151,7 @@ async def test_full_onboarding_journey(h):
     assert "аниқ билмайман" in replies[0] and replies[0].count("«ҳа»") == 1  # said once, in its own words
     replies = await h.say(NEW, "ҳа")
     assert "Мурожаатингиз қабул қилинди" in replies[-1] and "HR-" not in replies[-1]  # no number shown
-    assert "Янгиев Ботир" in h.to(HR)[-1] and "парковкаси" in h.to(HR)[-1] and "«Ботирга жавоб: …»" in h.to(HR)[-1]
+    assert "Янгиев Ботир" in h.to(HR)[-1] and "парковкаси" in h.to(HR)[-1] and "жавоб: …»" not in h.to(HR)[-1]
 
     # HR answers and closes by writing the person's name, not a number; the newcomer gets the answer
     replies = await h.say(HR, "Ботирга жавоб: Ҳа, ҳовлида 10 та жой бор.")

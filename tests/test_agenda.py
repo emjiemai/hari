@@ -53,14 +53,14 @@ async def test_each_person_hears_what_they_should_do_this_morning(team):
 
     newcomer = got[NEW]
     assert newcomer.startswith("Хайрли тонг, Ботир") and "Мослашув режангиздан" in newcomer
-    assert "«1 ни ўқидим»" in newcomer and "Мураббийингиз билан танишув" not in newcomer  # sent: not theirs now
+    assert "1. «" in newcomer and "деб ёзинг" not in newcomer and "Мураббийингиз билан танишув" not in newcomer  # sent: not theirs now
 
     mentor = got[MENTOR]
-    assert "Янгиев Ботир — «Мураббийингиз билан танишув»" in mentor and "«Ботирникини қабул қил»" in mentor
+    assert "Янгиев Ботир — «Мураббийингиз билан танишув»" in mentor and "қабул қил»" not in mentor
 
     hr = got[HR]
-    assert "Янгиев Ботир — Маълумотнома керак" in hr and "«Ботирга жавоб: …»" in hr
-    assert "Алиев Вали" in hr and "«Валининг аризасини кўрсат»" in hr and "«ҳаммасини рад эт»" in hr
+    assert "Янгиев Ботир — Маълумотнома керак" in hr and "жавоб: …»" not in hr
+    assert "Алиев Вали" in hr and "кўрсат»" not in hr and "рад эт»" not in hr  # the list, no instructions
 
     assert "Алиев Вали" in got[OWNER] and "Маълумотнома" not in got[OWNER]  # the owner is not the case's handler
     for text in got.values():  # people, not codes
@@ -88,7 +88,7 @@ async def test_mentor_writes_s1_and_the_newcomer_hears_the_next_step(team, sessi
     assert "Тасдиқлайсизми?" in replies[0] and "Мураббийингиз билан танишув" in replies[0]
     await h.say(MENTOR, "ҳа")
     told = h.to(NEW)[-1]
-    assert "қабул қилинди" in told and "Кейинги қадам: 1." in told and "«1 ни ўқидим»" in told
+    assert "қабул қилинди" in told and "Кейинги қадам: 1." in told and "деб ёзинг" not in told
 
 
 async def test_reading_a_step_points_to_the_next_one(team):
@@ -112,7 +112,7 @@ async def test_a_newcomer_who_joins_is_told_where_to_start_and_the_mentor_is_tol
     h = Harness()
     replies = await h.say(NEW, f"/start {token}")
     assert "Хуш келибсиз" in replies[0] and replies[1].startswith("Бугун шундан бошлаймиз")
-    assert "«1 ни очинг»" in replies[1]
+    assert "1. «" in replies[1] and "деб ёзинг" not in replies[1]
     assert "Янгиев Ботир (Сотувчи) HARI'га қўшилди, сиз унинг мураббийисиз" in h.to(MENTOR)[-1]
     async with session_scope() as s:
         assert (await s.execute(select(Employee).where(Employee.telegram_user_id == NEW))).scalar_one()

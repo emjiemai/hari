@@ -18,7 +18,7 @@ from hari import retention
 from hari.access import can_manage_employees
 from hari.apply import applications as A
 from hari.apply import rubric
-from hari.apply.report import report_hint, report_parts, send_to, tell_applicant, vacancy_title
+from hari.apply.report import report_parts, send_to, tell_applicant, vacancy_title
 from hari.apply.texts import STATUS_LABELS, t
 from hari.apply.vacancies import title_for
 from hari.bot import texts as T
@@ -116,10 +116,6 @@ async def applications(ctx: Ctx, args: dict) -> None:
             mark = " — маълумотини ўчиришни сўраган" if a.deletion_requested_at and not a.purged_at else ""
             lines.append(f"• {a.full_name}, {await vacancy_title(session, a)}: "
                          f"{STATUS_LABELS.get(a.status, a.status).lower()}{mark}")
-    if waiting:
-        name = given_name(waiting[0].full_name)
-        lines.append(f"\nҲисобот: «{name}нинг аризасини кўрсат». Қарор: «{name}ни суҳбатга чақир», "
-                     f"«… рад эт: сабаб», «… ишга ол». Ҳаммасини бирдан: «ҳаммасини рад эт».")
     await ctx.say("\n".join(lines))
 
 
@@ -131,7 +127,7 @@ async def app_show(ctx: Ctx, args: dict) -> None:
         actor = await session.get(Employee, ctx.emp.id)
         app = await session.get(Application, app.id)
         parts = report_parts(app, await vacancy_title(session, app))
-    await send_to(ctx.bot, actor, parts, report_hint(app), app.resume_file_id)
+    await send_to(ctx.bot, actor, parts, None, app.resume_file_id)
 
 
 async def app_interview(ctx: Ctx, args: dict) -> None:
@@ -272,12 +268,6 @@ async def _save_score(message: Message, tg: int, app_id: str, score: int) -> Non
 
 
 # --------------------------------------------------------------------------- deletion requests and legal hold
-
-def deletion_hint(full_name: str) -> str:
-    name = given_name(full_name) or "номзод"
-    return (f"Қонуний сақлаш асоси бўлмаса, «{name}нинг маълумотини ўчир» деб ёзинг; бўлса — "
-            f"«{name}га legal hold».")
-
 
 async def app_purge(ctx: Ctx, args: dict) -> None:
     app = await _pick_app(ctx, args, "app_purge", "Кимнинг маълумотини ўчирай?")

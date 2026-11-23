@@ -245,7 +245,6 @@ async def sweep(session: AsyncSession, now: datetime) -> list[str]:
     for emp, due in reminders.values():
         ids = ",".join(sorted(i.id for i in due))
         lines = ["Жавобингиз кутилмоқда:"] + [f"• {i.title}" for i in due[:8]]
-        lines.append("\nКўриш учун «иш навбати» деб ёзинг. Ҳозир жавоб бера олмасангиз, сабаби ва вақтини ёзиб қўйинг.")
         msg = await queue(session, emp, "reminder", "remind:" + hashlib.sha256(ids.encode()).hexdigest()[:40],
                           "\n".join(lines), now)
         if msg:
@@ -262,7 +261,7 @@ async def _unconfirmed_delivery(session: AsyncSession, emp: Employee, item: Resp
     if item.delivery_attempts == 0:
         item.delivery_attempts = 1
         msg = await queue(session, emp, "redelivery", key,
-                          f"{item.title} — сизнинг жавобингизни кутмоқда. Кўриш учун «иш навбати» деб ёзинг.", now)
+                          f"{item.title} — сизнинг жавобингизни кутмоқда.", now)
         return [msg.id] if msg else []
     attempt = (await session.execute(
         select(OutboundMessage).where(OutboundMessage.idempotency_key == key)

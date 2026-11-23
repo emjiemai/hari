@@ -91,20 +91,6 @@ def report_parts(app: Application, vacancy_title: str) -> list[str]:
     return parts
 
 
-def report_hint(app: Application) -> str | None:
-    """What the reader can write about this application (there are no buttons), by the person's name."""
-    who = (app.full_name or "").split()
-    name = who[1] if len(who) > 1 else (who[0] if who else "номзод")
-    lines = []
-    if app.status == "submitted":
-        lines.append(f"«{name}ни суҳбатга чақир»")
-    if app.status in ("submitted", "interview"):
-        lines += [f"«{name}ни рад эт: сабаб»", f"«{name}ни ишга ол»"]
-    if app.status == "interview":  # the person who held the interview scores it; HARI never does
-        lines.append(f"«{name}нинг суҳбат баҳоси 3» (0–4)")
-    return ("Қарор учун ёзинг: " + ", ".join(lines) + ".") if lines else None
-
-
 async def vacancy_title(session: AsyncSession, app: Application) -> str:
     vac = await session.get(Vacancy, app.vacancy_id) if app.vacancy_id else None
     return title_for(vac, "uz_cyrl")
@@ -131,7 +117,7 @@ async def send_report(bot: Bot, session: AsyncSession, app: Application) -> int:
     parts = report_parts(app, await vacancy_title(session, app))
     reached = 0
     for person in await recipients(session):
-        reached += await send_to(bot, person, parts, report_hint(app), app.resume_file_id)
+        reached += await send_to(bot, person, parts, None, app.resume_file_id)
     if reached:
         app.reported_at = now_utc()
     else:

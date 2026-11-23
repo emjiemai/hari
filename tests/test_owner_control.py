@@ -52,7 +52,7 @@ async def test_owner_gets_the_full_card_when_someone_joins_and_sets_the_position
 async def test_someone_without_a_card_is_reported_once_and_the_owner_adds_them(h, session_scope):
     await h.say(STRANGER, "/start")
     report = h.to(OWNER)[-1]
-    assert "профили йўқ одам" in report and "u504" in report and "«u504ни ходим қилиб қўш»" in report
+    assert "профили йўқ одам" in report and "u504" in report and "қилиб қўш»" not in report
     assert "Telegram ID" not in report  # added by name, no Telegram number shown
     await h.say(STRANGER, "/start")
     assert sum("профили йўқ" in t for t in h.to(OWNER)) == 1  # once per account, not on every /start
@@ -128,9 +128,9 @@ async def test_hr_edits_department_and_employees_see_nothing(h):
     assert (await h.say(MENTOR, "/profil E-0001"))[0] == "Бу амал учун ҳуқуқингиз йўқ."
 
 
-async def test_staff_list_says_what_to_write(h):
+async def test_staff_list_is_just_the_list(h):
     replies = await h.say(OWNER, "ходимлар")
-    assert "профили»" in replies[0] and "E-000" not in replies[0]
+    assert "профили»" not in replies[0] and "E-000" not in replies[0]
 
 
 # --------------------------------------------------------------------------- no Menu button

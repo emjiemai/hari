@@ -371,9 +371,6 @@ async def staff_list(ctx: Ctx, args: dict) -> None:
                 prog = f", мослашув {done}/{total}"
             mark = "✅" if p.telegram_user_id else "⏳"
             lines.append(f"{mark} {p.full_name} — {p.position}, {ROLE_LABELS.get(p.role, p.role)}{prog}")
-    name = agenda.given_name(people[-1].full_name) if people else "исм"
-    lines.append(f"\nБирортасини кўриш: «{name} профили». Ўзгартириш: «{name}нинг лавозими: …». "
-                 f"Янги ҳавола: «{name}га ҳавола».")
     await ctx.say("\n".join(lines)[:4000])
 
 
@@ -403,14 +400,10 @@ async def queue(ctx: Ctx, args: dict) -> None:
         await ctx.say("Иш навбатингиз бўш.")
         return
     for _, s, owner in steps:
-        name = agenda.given_name(owner.full_name)
-        await ctx.say(f"Мослашув, {owner.full_name}: «{s.title}»\nНатижа: {s.proof_text or '(файл)'}\n\n"
-                      f"Қабул: «{name}никини қабул қил». Қайтариш: «{name}никини қайтар: сабаб».")
+        await ctx.say(f"Мослашув, {owner.full_name}: «{s.title}»\nНатижа: {s.proof_text or '(файл)'}")
     for c, card, requester in case_cards:
         status = {"submitted": "янги", "accepted": "кўрилмоқда", "decided": "жавоб берилган, очиқ"}.get(c.status, c.status)
-        name = agenda.given_name(requester.full_name)
-        await ctx.say(f"{card}\nҲолат: {status}\n\nЖавоб: «{name}га жавоб: …». Кўряпман деб белгилаш: "
-                      f"«{name}никини олдим».")
+        await ctx.say(f"{card}\nҲолат: {status}")
 
 
 # --------------------------------------------------------------------------- accepting onboarding steps
@@ -564,8 +557,7 @@ async def case_take(ctx: Ctx, args: dict) -> None:
             await ctx.say(T.NOT_ALLOWED)
             return
         requester = await session.get(Employee, case.requester_id)
-    await ctx.say(f"{requester.full_name}нинг «{case.title}» мурожаатини кўряпсиз деб белгиладим. Жавоб: "
-                  f"«{agenda.given_name(requester.full_name)}га жавоб: …».")
+    await ctx.say(f"{requester.full_name}нинг «{case.title}» мурожаатини кўряпсиз деб белгиладим.")
     await notify(ctx.bot, requester, f"«{case.title}» мурожаатингизни {ctx.emp.full_name} кўриб чиқмоқда.")
 
 
@@ -645,7 +637,7 @@ async def _send_answer(message: Message, bot: Bot, tg: int, number: str, text: s
     await message.answer(T.say(me, f"Юборилди. «{case.title}» — {'ёпилди' if close else 'очиқ қолди'}."))
     state_text = "Мурожаат ёпилди." if close else "Мурожаат очиқ: кейинги қадам бажарилгач ёпилади."
     await notify(bot, requester, f"«{case.title}» мурожаатингизга жавоб ({me.full_name}):\n{case.decision}\n\n"
-                                 f"{state_text}\nЭътирозингиз бўлса, шу ерга ёзинг.")
+                                 f"{state_text}")
 
 
 # --------------------------------------------------------------------------- all at once
@@ -764,7 +756,7 @@ async def _do_close_all(ctx: Ctx, found: dict, text: str | None) -> None:
             counts["closed"] += 1
             requester = await session.get(Employee, case.requester_id)
             told.append((requester, f"«{case.title}» мурожаатингизга жавоб ({me.full_name}):\n{case.decision}\n\n"
-                                    "Мурожаат ёпилди. Эътирозингиз бўлса, шу ерга ёзинг."))
+                                    "Мурожаат ёпилди."))
         if can_manage_employees(me):
             for app_id in found.get("reject", []):
                 decision = await A.decide(session, app_id, me, "reject", basis=text or DEFAULT_BASIS)

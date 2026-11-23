@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hari.apply.report import recipients, report_hint, report_parts, send_report
+from hari.apply.report import recipients, report_parts, send_report
 from hari.apply.texts import t
 from hari.db.models import Application
 from tests.conftest import FakeBot
@@ -43,13 +43,6 @@ def test_no_ai_view_and_status_lines():
                          "Умумий ариза")
     assert "HARI тавсияси: AI баҳоси йўқ" in parts[0] and "Сайт:" not in parts[0]
     assert "Ҳолат: Рад этилган" in parts[0]
-
-
-def test_hint_follows_status():
-    assert report_hint(done_app()).count("«") == 3 and "суҳбатга чақир" in report_hint(done_app())
-    interview = report_hint(done_app(status="interview"))
-    assert "суҳбатга чақир" not in interview and "рад эт" in interview and "суҳбат баҳоси" in interview
-    assert report_hint(done_app(status="rejected")) is None and report_hint(done_app(status="hired")) is None
 
 
 def test_texts_in_three_languages():
