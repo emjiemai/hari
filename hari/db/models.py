@@ -307,6 +307,8 @@ class Task(Base):
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     done_text: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
     asked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # "how is it going?"
+    due: Mapped[date | None] = mapped_column(Date, nullable=True)  # by when, if the giver said
+    overdue_told_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class TaskUpdate(Base):

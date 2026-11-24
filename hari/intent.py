@@ -117,7 +117,8 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
     Action("assign", "lead", "give a colleague a piece of work / tell a named person to do something "
            "(\"Муслима backend'ни қилсин\", \"Анвар ертагача ҳисоботни топширсин\", \"tell Ali to call the client\"); "
            "HARI passes it on to that person", '{"who": employee code, "text": the work itself, copied word for word '
-           'from the message without their name, or null}'),
+           'from the message without their name, or null, "due": "YYYY-MM-DD" when the message says by when '
+           '(ertaga, жумагача, 25-ноябрь), else null}'),
     Action("task_done", "all", "I finished a task a colleague or my boss gave me (one of my_tasks)",
            '{"task": ref from my_tasks or null, "text": what I did or a note, word for word, or null}'),
     Action("task_status", "all", "how a task I was given is going: progress, a problem, when it will be ready "
@@ -251,9 +252,27 @@ _LANG_PHRASES = {_norm(w): lang for lang, words in {
 _SLASH = {
     "reja": "plan", "murojaat": "new_case", "murojaatlarim": "my_cases", "profilim": "my_profile",
     "unut": "forget", "forget": "forget", "help": "help", "yordam": "help", "navbat": "queue",
-    "yangi": "new_employee", "xodimlar": "staff_list", "arizalar": "applications",
+    "yangi": "new_employee", "xodimlar": "staff_list", "arizalar": "applications", "topshiriqlar": "tasks",
+    "vazifalar": "tasks",
     "profil": "employee_profile", "profile": "employee_profile", "taklif": "reinvite", "rol": "role_change",
 }
+
+
+def exact(text: str) -> Intent | None:
+    """Only what cannot be misread: a slash command, a whole known phrase, a language switch, or a code typed
+    on its own. Everything else goes to the agent first; `direct` reads it when the AI cannot be asked."""
+    raw = (text or "").strip()
+    if raw.startswith("/"):
+        return direct(raw)
+    words = _norm(raw)
+    if words in _PHRASES:
+        return Intent(_PHRASES[words])
+    if words in _LANG_PHRASES:
+        return Intent("set_language", {"lang": _LANG_PHRASES[words]})
+    bare = raw.strip(" .!?")
+    if (case_number(bare) or app_number(bare)) and len(bare) <= 20 or employee_code(bare) and len(bare) <= 7:
+        return direct(bare)
+    return None
 
 
 def direct(text: str) -> Intent | None:
@@ -621,8 +640,12 @@ async def route(message: str, names: list[str], context: dict, people: list[tupl
     if action not in names:
         return None
     raw_args = reply.data.get("args") if isinstance(reply.data.get("args"), dict) else {}
+    return Intent(action, clean_args(raw_args, message, {code for code, _ in people}), source="ai")
+
+
+def clean_args(raw_args: dict, message: str, codes: set[str]) -> dict:
+    """The model's arguments as the server may use them: text only if the person really wrote it."""
     args: dict = {}
-    codes = {code for code, _ in people}
     for key, value in raw_args.items():
         if key == "changes" and isinstance(value, list):
             args[key] = _changes(value, message, codes)
@@ -630,4 +653,4 @@ async def route(message: str, names: list[str], context: dict, people: list[tupl
             args[key] = verbatim(value, message)
         elif isinstance(value, (str, int, bool)) or value is None:
             args[key] = value
-    return Intent(action, args, source="ai")
+    return args

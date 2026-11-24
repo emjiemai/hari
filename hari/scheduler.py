@@ -248,6 +248,7 @@ async def tick(bot: Bot, now: datetime | None = None) -> int:
         ids += await digest.daily(session, now)
         ids += await digest.weekly(session, now)
         ids += await taskwatch.check_ins(session, now)
+        ids += await taskwatch.overdue(session, now)
         ids += await taskwatch.evening(session, now)
         purged = await retention.run(session, now)
         reports = await unreported(session, now)

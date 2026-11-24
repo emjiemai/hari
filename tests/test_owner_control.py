@@ -159,8 +159,8 @@ async def test_a_small_menu_for_each_kind_of_person(h):
     menus = _menus(h)
     await commands.install(h.bot)
     assert menus[0] == []  # no card, no menu
-    assert menus[OWNER] == menus[HR] == ["arizalar", "yangi", "navbat", "xodimlar"]
-    assert menus[MENTOR] == ["reja", "murojaat", "murojaatlarim"]  # «профилим» needs no slash
+    assert menus[OWNER] == menus[HR] == ["topshiriqlar", "arizalar", "navbat", "xodimlar"]
+    assert menus[MENTOR] == ["topshiriqlar", "reja", "murojaat", "murojaatlarim"]  # «профилим» needs no slash
     assert all(len(m) <= 4 for m in menus.values())
     from hari import intent as I
 
@@ -176,7 +176,7 @@ async def test_the_menu_follows_a_new_role(h):
     await h.say(OWNER, "Анварни HR қил")
     await h.say(OWNER, "ҳа")
     await h.say(MENTOR, "салом")  # their next message brings the new menu
-    assert menus[MENTOR] == ["arizalar", "yangi", "navbat", "xodimlar"]
+    assert menus[MENTOR] == ["topshiriqlar", "arizalar", "navbat", "xodimlar"]
 
 
 async def test_slash_commands_still_work_when_typed(h):

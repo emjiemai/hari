@@ -117,8 +117,8 @@ async def test_every_way_of_asking_shows_ones_own_profile_for_every_role(h, text
 
 async def test_someone_elses_card_and_a_fix_request_are_not_ones_own_profile(h, session_scope):
     assert "Аълоев Анвар" in (await h.say(HR, "Анвар профили"))[0]  # HR asking about someone else
-    replies = await h.say(EMP, "профилимда хато бор: лавозимим нотўғри ёзилган")
-    assert "Профилимдаги хатони тузатиш" in replies[0] and "Тасдиқлайсизми?" in replies[0]
+    await h.say(EMP, "профилимда хато бор: лавозимим нотўғри ёзилган")  # a request to HR, opened at once
+    assert "Профилимдаги хатони тузатиш" in h.to(HR)[-1] and "лавозимим нотўғри" in h.to(HR)[-1]
 
 
 async def test_accept_all_step_results_at_once(h, session_scope):

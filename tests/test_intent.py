@@ -117,16 +117,14 @@ def test_text_arguments_must_be_the_persons_own_words():
 
 # --------------------------------------------------------------------------- with the AI router
 
-async def test_the_ai_reads_free_text_as_an_action_and_nothing_happens_before_yes(h, monkeypatch):
+async def test_the_ai_reads_free_text_as_an_action_a_small_step_is_just_done(h, monkeypatch):
     router = use_router(monkeypatch, {"action": "step_done", "args": {"step": "4", "proof": "мураббий билан учрашдик"}})
-    replies = await h.say(NEW, "Устозов Анвар aka bilan bugun uchrashdik, мураббий билан учрашдик, режани келишдик")
-    assert "Тасдиқлайсизми?" in replies[0] and "«мураббий билан учрашдик»" in replies[0]
-    assert not h.to(MENTOR)  # nothing was sent yet
+    await h.say(NEW, "Устозов Анвар aka bilan bugun uchrashdik, мураббий билан учрашдик, режани келишдик")
+    assert "мураббий билан учрашдик" in h.to(MENTOR)[-1]  # sent to the mentor at once, no «ҳа»
     prompt = router.prompts[0]
     assert "Анвар" not in prompt and "Anvar" not in prompt and "Ботир" not in prompt  # codes, not names
     assert "staff_list" not in prompt and "role_change" not in prompt  # only this person's actions are offered
-    await h.say(NEW, "ҳа")
-    assert "мураббий билан учрашдик" in h.to(MENTOR)[-1]
+    assert "- staff:" not in prompt and "- numbers:" not in prompt  # and only their tools
     no_buttons(h)
 
 

@@ -10,6 +10,7 @@ and goes to the giver in the evening report (hari.taskwatch, which also asks the
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -21,12 +22,12 @@ from hari import audit, egress
 from hari import intent as I
 from hari.agenda import given_name
 from hari.bot import texts as T
-from hari.bot.context import Ctx, ask_confirm, ask_pick
+from hari.bot.context import Ctx, ask_pick
 from hari.bot.ui import notify
 from hari.db.models import Employee, Task, TaskUpdate, as_utc
 from hari.db.session import session_scope
 from hari.translit import cyrillic_to_latin, latin_to_cyrillic, normalize
-from hari.worktime import fmt, now_utc
+from hari.worktime import fmt, now_utc, today_local
 
 router = Router(name="tasks")
 MAX_TEXT = 1000
@@ -86,6 +87,16 @@ def _clean(text: object) -> str | None:
 
 # --------------------------------------------------------------------------- giving it
 
+def due_date(value: object) -> date | None:
+    """A due date the model read from the message ("ertagacha" → YYYY-MM-DD): only a real day from today on."""
+    try:
+        day = date.fromisoformat(str(value).strip()[:10]) if value else None
+    except ValueError:
+        return None
+    today = today_local()
+    return day if day is not None and today <= day <= today + timedelta(days=366) else None
+
+
 async def assign(ctx: Ctx, args: dict) -> None:
     person = await _person(ctx, args)
     if person is None:
@@ -99,23 +110,22 @@ async def assign(ctx: Ctx, args: dict) -> None:
     text = _clean(args.get("text")) or (None if args.get("emp_id") else _clean(_without_name(ctx.text, person)))
     if not text:
         await ctx.state.set_state(Assign.text)
-        await ctx.state.update_data(emp_id=person.id)
+        await ctx.state.update_data(emp_id=person.id, due=args.get("due"))
         await ctx.say(f"{given_name(person.full_name)} нима қилиши керак?")
         return
-    if not ctx.confirmed:
-        await ask_confirm(ctx, f"{person.full_name}га топшириқ юбораман:\n«{text}»", "assign",
-                          {"emp_id": person.id, "text": text})
-        return
+    due = due_date(args.get("due"))
     async with session_scope() as session:
-        task = Task(from_id=ctx.emp.id, to_id=person.id, text=text)
+        task = Task(from_id=ctx.emp.id, to_id=person.id, text=text, due=due)
         session.add(task)
         await session.flush()
         await audit.record(session, "task.assign", "sent", actor_id=ctx.emp.id, object_type="task",
                            object_id=task.id)
         person = await session.get(Employee, person.id)
-    reached = await notify(ctx.bot, person, f"{ctx.emp.full_name}дан топшириқ:\n«{text}»")
+    by = f"\nМуддат: {due:%d.%m.%Y}" if due else ""
+    reached = await notify(ctx.bot, person, f"{ctx.emp.full_name}дан топшириқ:\n«{text}»{by}")
     if reached:
-        await ctx.say(f"Юборилди: {person.full_name} топшириқни олди. Бажарса, сизга айтаман.")
+        await ctx.say(f"{person.full_name}га юбордим: «{text}»{by}\nҚандай кетаётганини сўраб тураман ва "
+                      "кечқурун сизга айтаман.")
     else:
         await ctx.say(f"Топшириқ сақланди, лекин {person.full_name}га хабар етмади: у HARI'ни қайта очиши керак.")
 
@@ -132,7 +142,8 @@ async def text_typed(message: Message, state: FSMContext, bot: Bot) -> None:
 
     ctx = await ctx_for(message, state, bot)
     if ctx is not None:
-        await run(ctx, I.Intent("assign", {"emp_id": data.get("emp_id"), "text": message.text}))
+        await run(ctx, I.Intent("assign", {"emp_id": data.get("emp_id"), "text": message.text,
+                                            "due": data.get("due")}))
 
 
 # --------------------------------------------------------------------------- doing it
@@ -246,11 +257,14 @@ async def tasks(ctx: Ctx, args: dict) -> None:
     lines = []
     if mine:
         lines.append("Сизга берилган:")
-        lines += [f"• «{t.text}» — {names.get(t.from_id, '')}, {fmt(t.at)}" for t in mine]
+        lines += [f"• «{t.text}» — {names.get(t.from_id, '')}, {fmt(t.at)}"
+                  + (f", муддат {t.due:%d.%m}" if t.due else "") for t in mine]
     if given:
         lines.append(("\n" if lines else "") + "Сиз берганлар:")
         lines += [f"• {names.get(t.to_id, '')}: «{t.text}» — "
-                  + (f"бажарилди, {fmt(t.done_at)}" if t.status == "done" else "ҳали бажарилмади") for t in given]
+                  + (f"бажарилди, {fmt(t.done_at)}" if t.status == "done" else
+                     "муддати ўтди" if t.due and t.due < today_local() else "ҳали бажарилмади")
+                  + (f" (муддат {t.due:%d.%m})" if t.due and t.status != "done" else "") for t in given]
     await ctx.say("\n".join(lines) if lines else "Очиқ топшириқ йўқ.")
 
 

@@ -136,13 +136,11 @@ async def test_full_onboarding_journey(h):
     assert "мураббийга юборилди" in replies[-1]
     assert "Мураббий билан учрашдим" in h.to(MENTOR)[-1] and "«қабул»" not in h.to(MENTOR)[-1]
 
-    # nobody but the mentor (or HR) can accept; the mentor accepts by writing, then confirms
+    # nobody but the mentor (or HR) can accept; the mentor accepts by writing it — a small step, no «ҳа»
     await h.say(STRANGER, "қабул")
     assert not any("қабул қилинди" in t for t in h.to(NEW))
     replies = await h.say(MENTOR, "қабул")
-    assert "Тасдиқлайсизми?" in replies[0] and "Мураббийингиз билан танишув" in replies[0]
-    assert not any("қабул қилинди" in t for t in h.to(NEW))  # nothing happens before «ҳа»
-    await h.say(MENTOR, "ҳа")
+    assert "Тасдиқлайсизми?" not in replies[-1] and "Мураббийингиз билан танишув" in replies[-1]
     assert any("қадами қабул қилинди" in t for t in h.to(NEW))
     assert "Мослашув режаси — 2/" in (await h.say(NEW, "Режам"))[0]  # one read + the accepted meeting
 

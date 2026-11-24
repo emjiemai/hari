@@ -1,10 +1,10 @@
 """A small Menu button: at most four commands, the ones each kind of person uses most, in their language.
 Everything else is still done by writing. Someone without a card (an applicant, a stranger) sees no menu.
 
-- HR and owners: applications, new employee, what waits for them (step results and requests), staff.
-- Mentors and managers: what waits for them, their plan, a request.
-- Employees: plan, a request, their requests.
-The profile is not in it: «профилим» is simply written.
+- HR and owners: tasks, applications, what waits for them (step results and requests), staff.
+- Mentors and managers: what waits for them, tasks, their plan, a request.
+- Employees: tasks, plan, a request, their requests.
+The profile and a new employee are not in it: «профилим», «янги ходим» are simply written.
 
 Each person's menu is set at start-up and again whenever what they should see changes (a new link,
 a new role): `refresh` is called on every message and only talks to Telegram when the kind changed.
@@ -25,16 +25,19 @@ from hari.db.session import session_scope
 
 # (command, uz_cyrl, uz_latn, ru)
 MENUS: dict[str, list[tuple[str, str, str, str]]] = {
-    "manage": [("arizalar", "Аризалар", "Arizalar", "Заявки"),
-               ("yangi", "Янги ходим қўшиш", "Yangi xodim qo'shish", "Добавить сотрудника"),
+    "manage": [("topshiriqlar", "Топшириқлар: кимга нима берилган, қандай кетяпти",
+                "Topshiriqlar: kimga nima berilgan, qanday ketyapti", "Задачи: кому что дано и как идёт"),
+               ("arizalar", "Аризалар", "Arizalar", "Заявки"),
                ("navbat", "Мени кутаётганлар: натижалар, мурожаатлар", "Meni kutayotganlar: natijalar, murojaatlar",
                 "Ждут меня: результаты, обращения"),
                ("xodimlar", "Ходимлар", "Xodimlar", "Сотрудники")],
     "work": [("navbat", "Мени кутаётганлар: натижалар, мурожаатлар", "Meni kutayotganlar: natijalar, murojaatlar",
               "Ждут меня: результаты, обращения"),
+             ("topshiriqlar", "Топшириқларим", "Topshiriqlarim", "Мои задачи"),
              ("reja", "Мослашув режам", "Moslashuv rejam", "Мой план адаптации"),
              ("murojaat", "Мурожаат ёзиш", "Murojaat yozish", "Написать обращение")],
-    "employee": [("reja", "Мослашув режам", "Moslashuv rejam", "Мой план адаптации"),
+    "employee": [("topshiriqlar", "Топшириқларим", "Topshiriqlarim", "Мои задачи"),
+                 ("reja", "Мослашув режам", "Moslashuv rejam", "Мой план адаптации"),
                  ("murojaat", "Мурожаат ёзиш", "Murojaat yozish", "Написать обращение"),
                  ("murojaatlarim", "Мурожаатларим", "Murojaatlarim", "Мои обращения")],
 }

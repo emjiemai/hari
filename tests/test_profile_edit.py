@@ -98,8 +98,8 @@ async def test_ones_own_profile_has_no_instructions_under_it(h):
 
 
 async def test_an_employee_asks_hr_instead_of_changing_it(h, session_scope):
-    replies = await h.say(EMP, "лавозимимни Катта сотувчи қил")
-    assert "Профилимдаги хатони тузатиш" in replies[0] and "Тасдиқлайсизми?" in replies[0]
+    await h.say(EMP, "лавозимимни Катта сотувчи қил")  # HR gets the request at once
+    assert "Профилимдаги хатони тузатиш" in h.to(HR)[-1] and "Катта сотувчи" in h.to(HR)[-1]
     assert (await card(session_scope, EMP)).position == "Сотувчи"
 
 

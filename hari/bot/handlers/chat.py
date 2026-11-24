@@ -4,11 +4,13 @@ asks and runs it (see hari.intent for how).
 Order for a verified employee:
 1. «ҳа» to a request HARI just offered → it is opened.
 2. A photo or file without words → the result of their task step.
-3. A slash command, a known phrase or a number/code (no AI needed).
+3. A slash command, a whole known phrase or a code typed alone (no AI needed).
 4. A topic with a fixed safety reply (pay, passwords, complaints, …) → that reply; it never goes to the AI.
-5. The AI router picks an action from those this person may use; when it cannot be asked, the likely
-   reading from step 3's keywords, else the message is a question.
-Before any change other people will see, the action says what it will do and waits for «ҳа».
+5. The agent (hari.agent) looks up what it needs and plans one or several actions, or answers from data.
+   When the AI cannot be asked: the reading of names, numbers and keywords (hari.intent.direct), else the
+   message is a question.
+Only risky steps (rejecting, deleting, hiring, roles, card changes, everything at once) wait for «ҳа» —
+several of them from one message, together, with one «ҳа». Everything else is just done.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy import select
 
+from hari import agent
 from hari import cases as C
 from hari import intent as I
 from hari import memory
@@ -26,7 +29,7 @@ from hari.access import can_manage_employees
 from hari.bot import commands
 from hari.bot import texts as T
 from hari.bot.common import handles_work, staff_by_tg
-from hari.bot.context import Ctx, Pending
+from hari.bot.context import Ctx, Pending, ask_confirm
 from hari.bot.handlers import employee, hiring, people, staff, tasks
 from hari.config import settings
 from hari.db.models import Employee
@@ -61,14 +64,71 @@ async def ctx_for(message: Message, state: FSMContext, bot: Bot) -> Ctx | None:
                text=(message.text or message.caption or "").strip(), file_id=file_id)
 
 
+# Steps that wait for «ҳа»: they reject, delete, hire, change roles or cards, or do many things at once.
+RISKY = {"app_reject", "app_interview", "app_purge", "app_hold", "app_hire", "employee_edit", "role_change",
+         "close_all", "add_person", "new_employee"}
+FORMS = {"app_hire", "add_person", "new_employee"}  # they go on with questions of their own
+
+
 async def run(ctx: Ctx, intent: I.Intent) -> None:
     if not I.allowed(intent.action, ctx.emp.role, ctx.works, ctx.manages):
         await ctx.say(T.NOT_ALLOWED)
         return
+    if intent.action not in RISKY:
+        ctx.confirmed = True  # a small step: done at once, no «ҳа»
     await EXECUTORS[intent.action](ctx, intent.args)
 
 
-async def _ai_reading(ctx: Ctx) -> I.Intent | None:
+async def _waiting(ctx: Ctx) -> bool:
+    """A question of HARI's waits for this person's answer (a number, «ҳа», a value)."""
+    return await ctx.state.get_state() is not None
+
+
+async def run_plan(ctx: Ctx, plan: agent.Plan) -> None:
+    """The agent's plan: its words, then the small steps at once, then the risky ones with one «ҳа»."""
+    steps = [s for s in plan.steps if I.allowed(s.action, ctx.emp.role, ctx.works, ctx.manages)]
+    if plan.steps and not steps and not plan.say:
+        await ctx.say(T.NOT_ALLOWED)
+        return
+    if plan.say:
+        async with session_scope() as session:
+            said = await agent.say_text(session, plan.say)
+        if said:
+            await ctx.say(said)
+        elif not steps:
+            steps = [I.Intent("question")]
+    if ctx.file_id:
+        for s in steps:
+            if s.action == "step_done":
+                s.args["file_id"] = ctx.file_id
+    question = next((s for s in steps if s.action == "question"), None)
+    steps = [s for s in steps if s.action != "question"]
+    for s in [s for s in steps if s.action not in RISKY]:
+        await run(ctx, s)
+        if await _waiting(ctx):
+            return
+    risky = [s for s in steps if s.action in RISKY and s.action not in FORMS]
+    forms = [s for s in steps if s.action in FORMS]
+    if len(risky) == 1:
+        await run(ctx, risky[0])
+    elif risky:
+        ctx.collected = []
+        for s in risky:
+            await run(ctx, s)
+        collected, ctx.collected = ctx.collected, None
+        if len(collected) == 1:
+            await ask_confirm(ctx, collected[0]["summary"], collected[0]["action"], collected[0]["args"])
+        elif collected:
+            summary = "\n\n".join(f"{n}. {c['summary']}" for n, c in enumerate(collected, start=1))
+            await ask_confirm(ctx, summary, "plan",
+                              {"steps": [{"action": c["action"], "args": c["args"]} for c in collected]})
+    if forms and not await _waiting(ctx):
+        await run(ctx, forms[0])
+    if question is not None and not steps and not ctx.said:
+        await run(ctx, question)
+
+
+async def _agent_plan(ctx: Ctx) -> agent.Plan | None:
     if settings.hari_paused:  # the emergency stop: no AI request of any kind
         return None
     names = [n for n in I.ACTIONS if I.allowed(n, ctx.emp.role, ctx.works, ctx.manages)]
@@ -91,7 +151,8 @@ async def _ai_reading(ctx: Ctx) -> I.Intent | None:
             people_rows += [(n, f) for n, f in (await session.execute(select(Application.number, Application.full_name)
                             .where(Application.number.is_not(None), Application.full_name != ""))).all() if f]
         history = await memory.recent(session, emp, now_utc())
-    return await I.route(ctx.text, names, context, [(c, n) for c, n in people_rows], history)
+        me = agent.me_for(emp, ctx.works)
+    return await agent.think(me, ctx.text, names, context, [(c, n) for c, n in people_rows], history, now_utc())
 
 
 async def handle(ctx: Ctx) -> None:
@@ -113,21 +174,30 @@ async def handle(ctx: Ctx) -> None:
         await employee.file_sent(ctx)
         return
 
+    exact = I.exact(text)
+    if exact is not None:
+        await run(ctx, exact)
+        return
     intent = I.direct(text)
     if intent is not None and (intent.source == "keyword" or intent.action == "close_all") \
             and not I.allowed(intent.action, ctx.emp.role, ctx.works, ctx.manages):
         intent = None  # a likely reading that is no command for this person ("қабул" with no queue)
-    fallback = None
-    if intent is not None and intent.source == "keyword":
-        fallback, intent = intent, None
-    if intent is None and match_rule(text):
-        intent = I.Intent("question")  # the fixed safety reply; this text never goes to the router
-    if intent is None:
-        intent = await _ai_reading(ctx)
-    if intent is None and fallback is None:
-        intent = await tasks.asked_task(ctx)  # no AI: the answer to "how is it going?"
-    if intent is None:
-        intent = fallback or I.Intent("question")
+    if match_rule(text):  # the fixed safety reply; this text never goes to the AI
+        await run(ctx, intent if intent is not None and intent.source != "keyword" else I.Intent("question"))
+        return
+    plan = await _agent_plan(ctx)
+    if plan is not None:
+        await run_plan(ctx, plan)
+        only_question = [s.action for s in plan.steps] == ["question"] and not plan.say
+        if not only_question:  # a question's answer is kept by hari.answer itself
+            async with session_scope() as session:
+                emp = await session.get(Employee, ctx.emp.id)
+                await memory.remember(session, emp, text, "\n".join(ctx.said) or "—", now_utc())
+        return
+    # The AI cannot be asked: read names, numbers and keywords.
+    if intent is None or intent.source == "keyword":
+        intent = await tasks.asked_task(ctx) or intent  # the answer to "how is it going?"
+    intent = intent or I.Intent("question")
     if ctx.file_id and intent.action == "step_done":
         intent.args["file_id"] = ctx.file_id
     await run(ctx, intent)
@@ -141,7 +211,11 @@ async def on_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
     ctx = await ctx_for(message, state, bot)
     if ctx is None:
         return
-    if I.is_yes(message.text) and pending.get("action"):
+    if I.is_yes(message.text) and pending.get("action") == "plan":
+        for step in (pending.get("args") or {}).get("steps") or []:
+            ctx.confirmed = True
+            await run(ctx, I.Intent(step["action"], dict(step.get("args") or {})))
+    elif I.is_yes(message.text) and pending.get("action"):
         ctx.confirmed = True
         await run(ctx, I.Intent(pending["action"], dict(pending.get("args") or {})))
     elif I.is_no(message.text):

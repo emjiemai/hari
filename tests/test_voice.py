@@ -75,13 +75,11 @@ async def test_a_reworded_confirmation_through_the_bot(session_scope, staff, mon
         mentor = await staff(s, "Устозов Анвар", tg=902)
         new = await staff(s, "Янгиев Ботир", tg=903, mentor=mentor, start=date(2026, 11, 2))
         await O.create_plan(s, new, date(2026, 11, 2))
+        await staff(s, "Эгаси Шахзод", "owner", tg=904)
     fake = Fake(lambda sent: "Хўп, " + sent)
     monkeypatch.setattr(voice, "llm_factory", lambda: fake)
     h = Harness()
-    await h.say(903, "4 ни бажардим")
-    await h.say(903, "Учрашдик")
-    replies = await h.say(902, "қабул")
+    replies = await h.say(904, "E-0002 ролини раҳбар қил")  # a risky step: it asks «ҳа» first
     assert replies[0].startswith("Хўп, ") and "Янгиев Ботир" in replies[0] and "«ҳа»" in replies[0]
     assert all("Ботир" not in seen and "Анвар" not in seen for seen in fake.seen)
-    await h.say(902, "ҳа")
-    assert any("қабул қилинди" in t for t in h.to(903))
+    assert "Раҳбар" in (await h.say(904, "ҳа"))[0]

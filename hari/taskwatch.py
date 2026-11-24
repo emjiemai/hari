@@ -1,7 +1,9 @@
 """Timers for the tasks colleagues give each other (hari.bot.handlers.tasks).
 
 - How is it going: during the person's work hours, TASK_CHECK_HOURS after the last news about an open
-  task (given, or the last thing they said about it), HARI asks them. At most once a day per task.
+  task (given, or the last thing they said about it), HARI asks them. At most once a day per task; on the
+  due day it asks even if they wrote recently.
+- Late: the day after the due date, still open → whoever gave it is told once, with the last news.
 - The evening report: at TASK_REPORT_TIME everyone who gave tasks hears, for each one still open or
   finished today, what the person said and when. Nothing to tell → no message.
 Both go through the outbox under a key for the day, so a restart never sends a second copy.
@@ -43,13 +45,42 @@ async def check_ins(session: AsyncSession, now: datetime) -> list[str]:
             continue
         update = await last_update(session, task)
         news = max([as_utc(task.at)] + ([as_utc(update.at)] if update else []))
-        if now - news < wait:
+        due_today = task.due == today
+        if now - news < wait and not due_today:
             continue
         giver = await session.get(Employee, task.from_id)
-        text = f"«{task.text}» топшириғи қандай кетяпти?" + (f" ({giver.full_name} берган)" if giver else "")
+        if due_today:
+            text = f"Бугун «{task.text}» топшириғининг муддати. Қандай кетяпти, улгурасизми?"
+        elif task.due and task.due < today:
+            text = f"«{task.text}» топшириғининг муддати {task.due:%d.%m} эди. Қачон тугайди?"
+        else:
+            text = f"«{task.text}» топшириғи қандай кетяпти?" + (f" ({giver.full_name} берган)" if giver else "")
         msg = await queue(session, person, "task_check", f"taskcheck:{task.id}:{today}", text, now)
         if msg:
             task.asked_at = now
+            queued.append(msg.id)
+    return queued
+
+
+async def overdue(session: AsyncSession, now: datetime) -> list[str]:
+    """Open tasks past their due date: the giver hears once, in their work hours."""
+    today = today_local(now)
+    queued: list[str] = []
+    for task in (await session.execute(select(Task).where(
+            Task.status == "open", Task.due.is_not(None), Task.due < today,
+            Task.overdue_told_at.is_(None)))).scalars():
+        giver = await session.get(Employee, task.from_id)
+        if giver is None or not giver.telegram_user_id or not is_staff(giver) or not is_work_time(giver, now):
+            continue
+        person = await session.get(Employee, task.to_id)
+        update = await last_update(session, task)
+        who = person.full_name if person else "Ходим"
+        last = (f" Охирги гапи ({local(as_utc(update.at)):%d.%m %H:%M}): {update.text}" if update
+                else " Ҳали ҳеч нарса ёзмади.")
+        text = f"{who}: «{task.text}» — муддати {task.due:%d.%m} эди, ҳали бажарилмади.{last}"
+        msg = await queue(session, giver, "task_overdue", f"taskoverdue:{task.id}", text, now)
+        if msg:
+            task.overdue_told_at = now
             queued.append(msg.id)
     return queued
 
@@ -69,6 +100,8 @@ async def report_lines(session: AsyncSession, giver: Employee, now: datetime) ->
                          + (f". Изоҳ: {task.done_text}" if task.done_text else ""))
             continue
         update = await last_update(session, task)
+        if task.due and task.due < today:
+            who += f" (муддати {task.due:%d.%m} эди)"
         if update is not None and today_local(as_utc(update.at)) == today:
             lines.append(f"• {who}: «{task.text}» — {update.text} ({_hm(as_utc(update.at))})")
         elif update is not None:

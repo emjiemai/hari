@@ -3,7 +3,7 @@ showing buttons — "do you confirm? (ҳа / йўқ)" and "which one? (number)".
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from aiogram import Bot
 from aiogram.fsm.context import FSMContext
@@ -32,6 +32,10 @@ class Ctx:
     text: str = ""
     file_id: str | None = None  # "photo:…" / "doc:…" sent with the message
     confirmed: bool = False  # the person already typed «ҳа» to this action
+    # Several risky steps from one message: each prepares its «ҳа» question here instead of asking it,
+    # and the person answers them all with one «ҳа» (hari.bot.handlers.chat.run_plan).
+    collected: list | None = None
+    said: list = field(default_factory=list)  # what HARI replied to this message (kept in the chat memory)
     _keyboard_cleared: bool = False
 
     @property
@@ -42,6 +46,7 @@ class Ctx:
         # The first reply also takes away the old menu keyboard on phones that still show it.
         markup = None if self._keyboard_cleared else NO_KEYBOARD
         self._keyboard_cleared = True
+        self.said.append(text)
         await self.message.answer(in_their_script(self.emp, self.text, text), reply_markup=markup)
 
 
@@ -65,6 +70,9 @@ def written_in_latin(text: str) -> bool:
 
 async def ask_confirm(ctx: Ctx, summary: str, action: str, args: dict) -> None:
     """Nothing changes yet: HARI says what it will do and waits for «ҳа»."""
+    if ctx.collected is not None:
+        ctx.collected.append({"summary": summary, "action": action, "args": args})
+        return
     await ctx.state.set_state(Pending.confirm)
     await ctx.state.update_data(pending={"action": action, "args": args})
     from hari import voice  # here: voice needs the database, this module is imported early
