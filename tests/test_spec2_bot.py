@@ -139,7 +139,7 @@ async def test_interview_score_is_given_by_a_person_and_completes_the_total(h_ap
     h = h_apply_done
     async with session_scope() as s:
         number = (await s.execute(select(Application))).scalar_one().number
-    assert "Тасдиқлайсизми?" in (await h.say(A_OWNER, f"{number} ни суҳбатга чақир"))[0]
+    assert "Тасдиқланг." in (await h.say(A_OWNER, f"{number} ни суҳбатга чақир"))[0]
     await h.say(A_OWNER, "ҳа")
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()

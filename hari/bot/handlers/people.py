@@ -594,17 +594,18 @@ async def add_role(message: Message, state: FSMContext) -> None:
     await message.answer(
         f"Текширинг:\nФИШ: {data['full_name']}\nЛавозим: {data['position']}\n"
         f"Бўлим: {data['department']}\nРоль: {ROLE_LABELS[role]}\nБошлаш санаси: бугун\n\n"
-        "Сақласам, у дарҳол ходим бўлади. Сақлайми? «ҳа» ёки «йўқ» деб ёзинг.")
+        "Сақласам, у дарҳол ходим бўлади. Сақлайми?")
 
 
 @router.message(AddPerson.confirm, F.text)
 async def add_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
-    if not I.is_yes(message.text):
-        if I.is_no(message.text):
+    means = await I.decide("Янги ходим карточкасини сақлайми?", message.text)
+    if means != "yes":
+        if means == "no":
             await state.clear()
-            await message.answer(T.CANCELLED)
+            await message.answer("Хўп, сақламадим.")
         else:
-            await message.answer("Сақлаш учун «ҳа», бекор қилиш учун «йўқ» деб ёзинг.")
+            await message.answer("Сақлайми?")
         return
     data = await state.get_data()
     await state.clear()

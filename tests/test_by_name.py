@@ -36,7 +36,7 @@ async def statuses(session_scope) -> dict[str, str]:
 
 async def test_reject_by_name_without_any_number(h, session_scope):
     replies = await h.say(OWNER, "Валини рад эт: тажрибаси бу ишга мос эмас")
-    assert "Тасдиқлайсизми?" in replies[0] and "Алиев Вали" in replies[0] and "A-2026" not in replies[0]
+    assert "Тасдиқланг." in replies[0] and "Алиев Вали" in replies[0] and "A-2026" not in replies[0]
     await h.say(OWNER, "ҳа")
     assert (await statuses(session_scope)) == {"Алиев Вали": "rejected", "Каримов Бобур": "submitted"}
     assert "бошқа номзодни танладик" in h.to(9001)[-1]
@@ -73,7 +73,7 @@ async def test_delete_all_applications_removes_them(h, session_scope):
 
 async def test_no_to_the_question_changes_nothing(h, session_scope):
     await h.say(OWNER, "удали все заявки")
-    assert "Бекор" in (await h.say(OWNER, "йўқ"))[0]
+    assert "қилмадим" in (await h.say(OWNER, "йўқ"))[0]
     assert set((await statuses(session_scope)).values()) == {"submitted"}
 
 
@@ -98,7 +98,7 @@ async def test_an_employee_saying_all_is_not_a_bulk_command(h, session_scope):
 
 async def test_a_name_is_fixed_by_writing(h, session_scope):
     replies = await h.say(OWNER, "Анварнинг исми: Аълоев Анвар Ботирович")
-    assert "Тасдиқлайсизми?" in replies[0]
+    assert "Тасдиқланг." in replies[0]
     await h.say(OWNER, "ҳа")
     async with session_scope() as s:
         assert (await s.execute(select(Employee).where(Employee.telegram_user_id == EMP))).scalar_one().full_name \

@@ -15,6 +15,8 @@ several of them from one message, together, with one «ҳа». Everything else i
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from aiogram import Bot, F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
@@ -159,7 +161,8 @@ async def handle(ctx: Ctx) -> None:
     text = ctx.text
     data = await ctx.state.get_data()
     offer, offered_for = data.get("offer"), data.get("last_question")
-    if offer and offered_for and text and is_consent(text):
+    if offer and offered_for and text and (is_consent(text) or await I.decide(
+            T.OFFER_QUESTION_HINT if offer == "question" else T.OFFER_CASE_HINT, text) == "yes"):
         # "ҳа", "тасдиқлайман", "юбор": the request HARI just offered is opened.
         await employee.take_offer(ctx, offer, offered_for)
         ctype = C.CASE_TYPES.get(offer)
@@ -203,25 +206,37 @@ async def handle(ctx: Ctx) -> None:
     await run(ctx, intent)
 
 
+CONFIRM_HOURS = 12  # a «Тасдиқланг» left unanswered longer than this is dropped, not run later
+
+
+def _fresh(pending: dict) -> bool:
+    try:
+        return now_utc() - datetime.fromisoformat(pending["at"]) < timedelta(hours=CONFIRM_HOURS)
+    except (KeyError, TypeError, ValueError):
+        return True  # asked before the time was kept
+
+
 @router.message(Pending.confirm, F.text)
 async def on_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
+    """The answer to «Тасдиқланг»: yes → done; no → not done; anything else → the waiting step is quietly
+    dropped and the message is read as a new one. The AI reads replies that are not a plain yes or no."""
     pending = (await state.get_data()).get("pending") or {}
     await state.set_state(None)
     await state.update_data(pending=None)
     ctx = await ctx_for(message, state, bot)
     if ctx is None:
         return
-    if I.is_yes(message.text) and pending.get("action") == "plan":
+    means = await I.decide(pending.get("summary") or "", message.text) if _fresh(pending) else "other"
+    if means == "yes" and pending.get("action") == "plan":
         for step in (pending.get("args") or {}).get("steps") or []:
             ctx.confirmed = True
             await run(ctx, I.Intent(step["action"], dict(step.get("args") or {})))
-    elif I.is_yes(message.text) and pending.get("action"):
+    elif means == "yes" and pending.get("action"):
         ctx.confirmed = True
         await run(ctx, I.Intent(pending["action"], dict(pending.get("args") or {})))
-    elif I.is_no(message.text):
-        await ctx.say(T.CANCELLED)
-    else:  # something new: the waiting action is not done
-        await ctx.say("Олдинги амални бажармадим.")
+    elif means == "no":
+        await ctx.say("Хўп, қилмадим.")
+    else:
         await handle(ctx)
 
 

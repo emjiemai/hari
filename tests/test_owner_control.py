@@ -40,7 +40,7 @@ async def test_owner_gets_the_full_card_when_someone_joins_and_sets_the_position
     assert not any("қўшилди" in t for t in h.to(HR))  # the report goes to owners
 
     replies = await h.say(OWNER, "Ботирнинг лавозими: Катта сотувчи")
-    assert "Тасдиқлайсизми?" in replies[0] and "«Сотувчи» → «Катта сотувчи»" in replies[0]
+    assert "Тасдиқланг." in replies[0] and "«Сотувчи» → «Катта сотувчи»" in replies[0]
     replies = await h.say(OWNER, "ҳа")
     assert "«Сотувчи» → «Катта сотувчи»" in replies[0] and "Лавозим: Катта сотувчи" in replies[0]
     assert "лавозим — Катта сотувчи" in h.to(777)[-1]  # the person is told

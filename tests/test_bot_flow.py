@@ -140,13 +140,13 @@ async def test_full_onboarding_journey(h):
     await h.say(STRANGER, "қабул")
     assert not any("қабул қилинди" in t for t in h.to(NEW))
     replies = await h.say(MENTOR, "қабул")
-    assert "Тасдиқлайсизми?" not in replies[-1] and "Мураббийингиз билан танишув" in replies[-1]
+    assert "Тасдиқланг." not in replies[-1] and "Мураббийингиз билан танишув" in replies[-1]
     assert any("қадами қабул қилинди" in t for t in h.to(NEW))
     assert "Мослашув режаси — 2/" in (await h.say(NEW, "Режам"))[0]  # one read + the accepted meeting
 
     # a question HARI has no source for: no guessing, offers a person
     replies = await h.say(NEW, "Офисда автомобиль парковкаси борми?")
-    assert "аниқ билмайман" in replies[0] and replies[0].count("«ҳа»") == 1  # said once, in its own words
+    assert "аниқ билмайман" in replies[0] and "сўраб берайми?" in replies[0] and "«ҳа»" not in replies[0]
     replies = await h.say(NEW, "ҳа")
     assert "Мурожаатингиз қабул қилинди" in replies[-1] and "HR-" not in replies[-1]  # no number shown
     assert "Янгиев Ботир" in h.to(HR)[-1] and "парковкаси" in h.to(HR)[-1] and "жавоб: …»" not in h.to(HR)[-1]
@@ -182,8 +182,8 @@ async def test_typed_commands_without_ai(h):
     replies = await h.say(HR, "Анвар профили")
     assert "Устозов Анвар" in replies[0] and "лавозими: …" not in replies[0] and "E-0002" not in replies[0]
     replies = await h.say(HR, "Анварнинг лавозими: Катта сотувчи-маслаҳатчи")
-    assert "Тасдиқлайсизми?" in replies[0]
-    assert "Бекор" in (await h.say(HR, "йўқ"))[0]
+    assert "Тасдиқланг." in replies[0]
+    assert "қилмадим" in (await h.say(HR, "йўқ"))[0]
     replies = await h.say(MENTOR, "мурожаат")
     assert "1. Таътил" in replies[0] and "4. Маълумотнома керак" in replies[0]
     replies = await h.say(MENTOR, "4")  # a certificate, by its number

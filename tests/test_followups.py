@@ -62,7 +62,7 @@ async def test_screenshot_conversation_ends_in_a_request_not_a_question(h, kb): 
 
     second = await h.say(EMP, "ha tayyorlab yubor")
     assert lat("мурожаат очиш мумкин") in second[0] and lat("Айнан қайси") not in second[0]
-    assert lat("Мурожаат очай десангиз, «ҳа» деб ёзинг.") in second[0]  # how to open it: by writing
+    assert lat("Мурожаат очайми?") in second[0]  # how to open it: by writing
 
     calls_before = len(ScriptedLLM.calls)
     third = await h.say(EMP, "tasdiqlayman")

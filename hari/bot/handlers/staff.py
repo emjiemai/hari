@@ -206,7 +206,7 @@ async def ne_manager(message: Message, state: FSMContext) -> None:
         return
     ok, person = await _person_from_reply(message.text, (await state.get_data()).get("manager_options", []))
     if not ok:
-        await message.answer("Бу одамни топмадим. Рўйхатдаги рақамни, кодни ёки «йўқ» деб ёзинг.")
+        await message.answer("Бу одамни топмадим. Ким экан?")
         return
     await state.update_data(manager_id=person)
     await state.set_state(NewEmp.mentor)
@@ -221,7 +221,7 @@ async def ne_mentor(message: Message, state: FSMContext) -> None:
         return
     ok, person = await _person_from_reply(message.text, (await state.get_data()).get("mentor_options", []))
     if not ok:
-        await message.answer("Бу одамни топмадим. Рўйхатдаги рақамни, кодни ёки «йўқ» деб ёзинг.")
+        await message.answer("Бу одамни топмадим. Ким экан?")
         return
     await state.update_data(mentor_id=person)
     await state.set_state(NewEmp.start_date)
@@ -280,7 +280,7 @@ async def _ne_summary(message: Message, state: FSMContext) -> None:
         f"Роль: {ROLE_LABELS[data['role']]}\nРаҳбар: {mgr.full_name if mgr else '—'}\n"
         f"Мураббий: {mnt.full_name if mnt else '—'}\n"
         f"Бошлаш: {date.fromisoformat(data['start_date']):%d.%m.%Y}\nТил: {LANG_LABELS[data['language']]}\n\n"
-        "Ишга қабул қарори алоҳида тасдиқланган бўлиши керак. Карточкани сақлайми? «ҳа» ёки «йўқ» деб ёзинг."
+        "Ишга қабул қарори алоҳида тасдиқланган бўлиши керак. Карточкани сақлайми?"
     )
     await state.set_state(NewEmp.confirm)
     await message.answer(summary)
@@ -292,12 +292,13 @@ class _AlreadyDecided(Exception):
 
 @router.message(NewEmp.confirm, F.text)
 async def ne_confirm(message: Message, state: FSMContext, bot: Bot) -> None:
-    if not I.is_yes(message.text):
-        if I.is_no(message.text):
+    means = await I.decide("Ходим карточкасини сақлайми?", message.text)
+    if means != "yes":
+        if means == "no":
             await state.clear()
-            await message.answer(T.CANCELLED)
+            await message.answer("Хўп, сақламадим.")
         else:
-            await message.answer("Сақлаш учун «ҳа», бекор қилиш учун «йўқ» деб ёзинг.")
+            await message.answer("Карточкани сақлайми?")
         return
     data = await state.get_data()
     await state.clear()
@@ -586,8 +587,7 @@ async def case_answer(ctx: Ctx, args: dict) -> None:
 
 
 def _close_question(title: str, text: str) -> str:
-    return (f"«{title}» мурожаатига жавоб: «{text}»\n\nМасала тўлиқ ҳал бўлдими? «ҳа» — юбориб ёпаман, «очиқ» — юбораман, "
-            "мурожаат очиқ қолади, «бекор» — юбормайман.")
+    return f"«{title}» мурожаатига жавоб: «{text}»\n\nМасала тўлиқ ҳал бўлдими?"
 
 
 @router.message(CaseAnswer.text, F.text)
@@ -609,13 +609,15 @@ async def case_answer_close(message: Message, state: FSMContext, bot: Bot) -> No
         await state.clear()
         await message.answer(T.CANCELLED)
         return
-    if I.is_yes(message.text):
-        close = True
-    elif words.startswith("очиқ") or words.startswith("йўқ") or words.startswith("нет") or "открыт" in words:
+    if words.startswith("очиқ") or "открыт" in words:
         close = False
     else:
-        await message.answer("«ҳа» (ёпаман), «очиқ» (очиқ қолади) ёки «бекор» деб ёзинг.")
-        return
+        means = await I.decide("Мурожаатга жавоб юборилади. Масала тўлиқ ҳал бўлдими (мурожаатни ёпайми)?",
+                               message.text)
+        if means == "other":
+            await message.answer("Масала тўлиқ ҳал бўлдими?")
+            return
+        close = means == "yes"
     data = await state.get_data()
     await state.clear()
     await _send_answer(message, bot, message.from_user.id, data.get("number", ""), data.get("answer", ""), close)

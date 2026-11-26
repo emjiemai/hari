@@ -74,7 +74,10 @@ async def ask_confirm(ctx: Ctx, summary: str, action: str, args: dict) -> None:
         ctx.collected.append({"summary": summary, "action": action, "args": args})
         return
     await ctx.state.set_state(Pending.confirm)
-    await ctx.state.update_data(pending={"action": action, "args": args})
+    from hari.worktime import now_utc  # here: worktime needs the models
+
+    await ctx.state.update_data(pending={"action": action, "args": args, "summary": summary[:1500],
+                                         "at": now_utc().isoformat()})
     from hari import voice  # here: voice needs the database, this module is imported early
 
     await ctx.say(await voice.natural(T.CONFIRM.format(summary=summary), await voice.known_names()))

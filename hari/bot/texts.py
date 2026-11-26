@@ -59,9 +59,9 @@ def help_text(emp: Employee, works: bool, manages: bool) -> str:
     return HELP.format(extra=extra)
 
 
-CONFIRM = "{summary}\n\nТасдиқлайсизми? «ҳа» ёки «йўқ» деб ёзинг."
-OFFER_CASE_HINT = "Мурожаат очай десангиз, «ҳа» деб ёзинг."
-OFFER_QUESTION_HINT = "HR масъулига юборай десангиз, «ҳа» деб ёзинг."
+CONFIRM = "{summary}\n\nТасдиқланг."
+OFFER_CASE_HINT = "Мурожаат очайми?"
+OFFER_QUESTION_HINT = "HR масъулига юборайми?"
 NOT_UNDERSTOOD_REF = "Қайси бирини назарда тутганингизни тушунмадим."
 
 MEMORY_FORGOTTEN = "Суҳбатимиздан эслаганларимнинг ҳаммасини ўчирдим. Мурожаатларингиз ўз жойида қолди."

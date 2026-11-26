@@ -159,5 +159,4 @@ async def morning_brief(session: AsyncSession, emp: Employee, now: datetime) -> 
     if not blocks:
         return None
     head = f"Хайрли тонг, {first_name(emp)}. Бугун сиздан кутилаётган ишлар:"
-    tail = "Нимадир тушунарсиз бўлса ёки бажара олмасангиз, шу ерга ёзинг — ёрдам бераман."
-    return "\n\n".join([head, *blocks, tail])
+    return "\n\n".join([head, *blocks])

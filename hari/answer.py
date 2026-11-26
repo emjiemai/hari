@@ -210,12 +210,10 @@ def fallback_text(hits: list[Hit]) -> str:
 
 
 # Said like a person, and each already says how to go on, so no extra hint line is added under them.
-NO_SOURCE_TEXT = ("Буни аниқ билмайман, тахмин қилиб айтгим келмаяпти. HR'дан сўраб берайми? «ҳа» десангиз, "
-                  "юбораман ва жавобини ўзим етказаман.")
-PAUSED_TEXT = ("Ҳозир вақтинча ишламаяпман. Шошилинч бўлса, HR масъулига тўғридан-тўғри ёзинг ёки «ҳа» деб "
-               "ёзинг — саволингизни уларга юбораман.")
+NO_SOURCE_TEXT = "Буни аниқ билмайман, тахмин қилиб айтгим келмаяпти. HR'дан сўраб берайми?"
+PAUSED_TEXT = "Ҳозир вақтинча ишламаяпман. Саволингизни HR масъулига юборайми?"
 CONFLICT_TEXT = ("Бу бўйича ҳужжатларда бир-бирига тўғри келмайдиган гаплар бор, шунинг учун биттасини танлаб "
-                 "айтмайман. HR'дан аниқлаб берайми? «ҳа» десангиз, юбораман.")
+                 "айтмайман. HR'дан аниқлаб берайми?")
 
 
 # Small talk answered without the AI when it cannot be asked: (word stems, reply). Like a person: short.

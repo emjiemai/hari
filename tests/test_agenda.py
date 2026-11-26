@@ -85,7 +85,7 @@ async def test_no_brief_in_the_afternoon_and_nothing_from_today(team, session_sc
 async def test_mentor_writes_s1_and_the_newcomer_hears_the_next_step(team, session_scope):
     h = Harness()
     replies = await h.say(MENTOR, "Ботирникини қабул қил")  # a small step: done at once, no «ҳа»
-    assert "Тасдиқлайсизми?" not in replies[0] and any("Мураббийингиз билан танишув" in r for r in replies)
+    assert "Тасдиқланг." not in replies[0] and any("Мураббийингиз билан танишув" in r for r in replies)
     told = h.to(NEW)[-1]
     assert "қабул қилинди" in told and "Кейинги қадам: 1." in told and "деб ёзинг" not in told
 

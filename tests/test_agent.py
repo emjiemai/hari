@@ -74,7 +74,7 @@ async def test_risky_steps_wait_for_one_yes_together(h, monkeypatch):
         {"action": "role_change", "args": {"who": "E-0004", "role": "hr"}},
     ]})
     replies = await h.say(OWNER, "Анварни раҳбар, Каримни HR қил")
-    assert len(replies) == 1 and "1. " in replies[0] and "2. " in replies[0] and "Тасдиқлайсизми?" in replies[0]
+    assert len(replies) == 1 and "1. " in replies[0] and "2. " in replies[0] and "Тасдиқланг." in replies[0]
     assert "Устозов Анвар" in replies[0] and "Бошлиқов Карим" in replies[0]
     assert (await _role(MENTOR), await _role(BOSS)) == ("employee", "manager")  # nothing before «ҳа»
     await h.say(OWNER, "ҳа")
@@ -111,3 +111,52 @@ async def test_what_the_ai_says_is_checked_before_it_is_sent(h, monkeypatch):
     use_router(monkeypatch, {"say": "Картангиз: 8600 1234 5678 9012"})
     replies = await h.say(OWNER, "нима гап?")
     assert not any("8600" in r for r in replies)
+
+
+# --------------------------------------------------------------------------- «Тасдиқланг»
+
+async def _ask_two_roles(h, monkeypatch):
+    use_router(monkeypatch, {"do": [
+        {"action": "role_change", "args": {"who": "E-0003", "role": "manager"}},
+        {"action": "role_change", "args": {"who": "E-0004", "role": "hr"}},
+    ]})
+    replies = await h.say(OWNER, "Анварни раҳбар, Каримни HR қил")
+    assert replies[0].rstrip().endswith("Тасдиқланг.") and "«ҳа»" not in replies[0]
+
+
+async def test_a_reply_in_own_words_is_read_by_the_ai(h, monkeypatch):
+    await _ask_two_roles(h, monkeypatch)
+    use_router(monkeypatch, {"means": "yes"})
+    await h.say(OWNER, "бўпти, қайта сўрама, қилавер")
+    assert (await _role(MENTOR), await _role(BOSS)) == ("manager", "hr")
+
+
+async def test_something_else_drops_the_waiting_step_quietly(h, monkeypatch):
+    await _ask_two_roles(h, monkeypatch)
+    use_router(monkeypatch, {"means": "other"}, {"action": "tasks", "args": {}})
+    replies = await h.say(OWNER, "менга берилган ишларни кўрсат")
+    assert not any("бажармадим" in r or "«ҳа»" in r for r in replies)
+    assert (await _role(MENTOR), await _role(BOSS)) == ("employee", "manager")
+
+
+async def test_a_yes_the_next_day_does_not_run_an_old_step(h, monkeypatch):
+    from datetime import timedelta
+
+    from hari.worktime import now_utc
+
+    await _ask_two_roles(h, monkeypatch)
+    from aiogram.fsm.storage.base import StorageKey
+
+    key = StorageKey(bot_id=h.bot.id, chat_id=OWNER, user_id=OWNER)
+    data = await h.dp.storage.get_data(key)
+    data["pending"]["at"] = (now_utc() - timedelta(hours=20)).isoformat()
+    await h.dp.storage.set_data(key, data)
+    use_router(monkeypatch)
+    await h.say(OWNER, "ҳа")
+    assert (await _role(MENTOR), await _role(BOSS)) == ("employee", "manager")
+
+
+async def test_the_morning_message_has_no_tail(h):
+    from hari import agenda
+
+    assert "ёрдам бераман" not in __import__("inspect").getsource(agenda.morning_brief)

@@ -58,7 +58,7 @@ def test_values_are_understood():
 async def test_the_owner_changes_several_things_on_their_own_card_at_once(h, session_scope):
     replies = await h.say(OWNER, "Исмимни Эшонов Шахзод Аббосович қил, лавозимим Директор, бўлимим Раҳбарият")
     reply = replies[0]
-    assert "Тасдиқлайсизми?" in reply and "«Familiya Ism» → «Эшонов Шахзод Аббосович»" in reply
+    assert "Тасдиқланг." in reply and "«Familiya Ism» → «Эшонов Шахзод Аббосович»" in reply
     assert "«Admin» → «Директор»" in reply and "«Rahbariyat» → «Раҳбарият»" in reply
     assert (await card(session_scope, OWNER)).position == "Admin"  # nothing yet
     replies = await h.say(OWNER, "ҳа")
@@ -73,7 +73,7 @@ async def test_the_owner_changes_several_things_on_their_own_card_at_once(h, ses
 
 async def test_hr_changes_someone_elses_manager_hours_and_days(h, session_scope):
     replies = await h.say(HR, "Анварнинг раҳбари Кадрова Зайнаб бўлсин, иш вақти 8-17, иш кунлари Ду-Жу")
-    assert "Тасдиқлайсизми?" in replies[0] and "«—» → «Кадрова Зайнаб»" in replies[0]
+    assert "Тасдиқланг." in replies[0] and "«—» → «Кадрова Зайнаб»" in replies[0]
     await h.say(HR, "ҳа")
     anvar, hr = await card(session_scope, EMP), await card(session_scope, HR)
     assert (anvar.manager_id, anvar.work_start_hour, anvar.work_end_hour, anvar.work_days) == (hr.id, 8, 17, "0,1,2,3,4")

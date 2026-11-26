@@ -586,7 +586,7 @@ async def question(ctx: Ctx, args: dict) -> None:
         await open_and_tell(ctx.message, ctx.bot, ctx.tg, result.auto_case, C.EXIT_INTENT_BODY,
                             dedupe=f"{result.auto_case}:{emp.id}:{today_local()}", quiet=True)
     reply = result.text
-    if result.offer_case and "«ҳа»" not in reply:  # the reply may already say it, in its own words
+    if result.offer_case and not reply.rstrip().endswith("?"):  # the reply may already ask it, in its own words
         reply += "\n\n" + (T.OFFER_QUESTION_HINT if result.offer_case == "question" else T.OFFER_CASE_HINT)
     # Model text is sent as plain text (no parse mode): nothing in it becomes a link or markup.
     await ctx.say(reply)
