@@ -10,6 +10,7 @@ WEBHOOK_PATH with a secret header, and Render checks /health.
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import sys
 
@@ -27,6 +28,7 @@ from hari.bot.handlers import apply, chat, employee, hiring, people, staff, star
 from hari.bot.middleware import DedupeMiddleware
 from hari.config import WEBHOOK_PATH, settings
 from hari.db.session import create_schema, ping, session_scope
+from hari.housekeeping import close_test_requests
 from hari.knowledge.loader import load_directory
 from hari.owners import ensure_owners
 
@@ -65,6 +67,7 @@ async def prepare() -> None:
         result = await load_directory(session, settings.knowledge_dir)
         added = await seed_vacancies(session)
         owners = await ensure_owners(session, settings.owner_ids)
+        await close_test_requests(session)
     if added:
         logger.info("Vacancies: loaded the {} starting vacancies", added)
     if owners:
@@ -83,7 +86,10 @@ async def prepare() -> None:
 
 async def health(_request: web.Request) -> web.Response:
     ok = await ping()
-    return web.json_response({"status": "ok" if ok else "database unavailable"}, status=200 if ok else 503)
+    # Which commit is running (Render sets RENDER_GIT_COMMIT): shows whether the last push is deployed.
+    return web.json_response({"status": "ok" if ok else "database unavailable",
+                              "version": os.environ.get("RENDER_GIT_COMMIT", "")[:7] or "local"},
+                             status=200 if ok else 503)
 
 
 def build_web_app(bot: Bot, dp: Dispatcher) -> web.Application:

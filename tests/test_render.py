@@ -39,7 +39,7 @@ async def test_web_server_health_and_webhook_secret(session_scope, staff):
     await client.start_server()
     try:
         resp = await client.get("/health")
-        assert resp.status == 200 and (await resp.json()) == {"status": "ok"}
+        assert resp.status == 200 and (await resp.json()) == {"status": "ok", "version": "local"}
 
         update = {"update_id": 777001, "message": {
             "message_id": 1, "date": 1762500000, "chat": {"id": 4242, "type": "private"},
