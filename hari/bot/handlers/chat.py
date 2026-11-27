@@ -26,7 +26,7 @@ from sqlalchemy import select
 from hari import agent
 from hari import cases as C
 from hari import intent as I
-from hari import memory
+from hari import memory, owners
 from hari.access import can_manage_employees
 from hari.bot import commands
 from hari.bot import texts as T
@@ -55,6 +55,11 @@ async def ctx_for(message: Message, state: FSMContext, bot: Bot) -> Ctx | None:
         emp = await staff_by_tg(session, message.from_user.id)
         if emp is None:
             return None
+        if owners.is_placeholder(emp.full_name, message.from_user.id):
+            # An owner card made from HARI_OWNERS ("Эгаси 5519…"): it takes their Telegram name at once,
+            # so no name with a number is ever shown.
+            await owners.claim_owner_name(session, message.from_user.id, message.from_user.first_name,
+                                          message.from_user.last_name)
         works = await handles_work(session, emp)
     await commands.refresh(bot, emp, works)  # a new link or a new role: the small menu follows
     file_id = None

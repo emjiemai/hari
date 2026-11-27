@@ -28,3 +28,22 @@ async def test_test_requests_are_closed_once_and_real_ones_stay(session_scope, s
         rows = [(c.requester_id, c.status) for c in (await s.execute(select(HRCase))).scalars()]
     assert sorted(st for who, st in rows if who == tester.id) == ["closed", "closed"]
     assert [st for who, st in rows if who == real.id] == ["submitted"]
+
+
+async def test_an_owner_card_never_shows_a_telegram_number(session_scope, staff):
+    from hari.employees import by_telegram
+    from hari.housekeeping import unnumber_owner_cards
+    from tests.test_bot_flow import Harness
+
+    async with session_scope() as s:
+        old = await staff(s, "Эгаси 5519019734", "owner", tg=5519019734)
+        other = await staff(s, "Эгаси 111", "owner", tg=111)
+        real = await staff(s, "Эгаси Шахзод", "owner", tg=112)
+    async with session_scope() as s:
+        assert await unnumber_owner_cards(s) == 2
+    async with session_scope() as s:
+        assert (await by_telegram(s, 111)).full_name == "Эгаси" and (await by_telegram(s, 112)).full_name == "Эгаси Шахзод"
+    await Harness().say(5519019734, "салом")  # the next message: the Telegram name (u5519019734 in tests)
+    async with session_scope() as s:
+        assert "5519019734" not in (await by_telegram(s, 5519019734)).full_name.replace("u5519019734", "")
+    assert old and other and real

@@ -28,7 +28,7 @@ from hari.bot.handlers import apply, chat, employee, hiring, people, staff, star
 from hari.bot.middleware import DedupeMiddleware
 from hari.config import WEBHOOK_PATH, settings
 from hari.db.session import create_schema, ping, session_scope
-from hari.housekeeping import close_test_requests
+from hari.housekeeping import close_test_requests, unnumber_owner_cards
 from hari.knowledge.loader import load_directory
 from hari.owners import ensure_owners
 
@@ -68,6 +68,7 @@ async def prepare() -> None:
         added = await seed_vacancies(session)
         owners = await ensure_owners(session, settings.owner_ids)
         await close_test_requests(session)
+        await unnumber_owner_cards(session)
     if added:
         logger.info("Vacancies: loaded the {} starting vacancies", added)
     if owners:

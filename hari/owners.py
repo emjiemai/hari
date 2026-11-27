@@ -21,6 +21,10 @@ ROLE_NAMES = {"employee": "Ходим", "manager": "Раҳбар", "hr": "HR", "
 PLACEHOLDER = "Эгаси"
 
 
+def is_placeholder(full_name: str, telegram_user_id: int | None = None) -> bool:
+    return full_name == PLACEHOLDER or (telegram_user_id is not None and full_name == f"{PLACEHOLDER} {telegram_user_id}")
+
+
 class RoleError(ValueError):
     """Shown to the owner as is (Uzbek)."""
 
@@ -38,6 +42,7 @@ async def ensure_owners(session: AsyncSession, telegram_ids: list[int]) -> list[
                 full_name=f"{PLACEHOLDER} {tg}", department="Раҳбарият", position="Эгаси", role="owner",
                 start_date=today_local(),
             ), created_by=None)
+            emp.full_name = PLACEHOLDER  # no Telegram number in a name; their Telegram name comes when they write
             emp.telegram_user_id, emp.identity_verified_at, emp.status = tg, now_utc(), "active"
             touched.append(emp.code)
         elif emp.role != "owner":
@@ -50,11 +55,12 @@ async def ensure_owners(session: AsyncSession, telegram_ids: list[int]) -> list[
 
 
 async def claim_owner_name(session: AsyncSession, telegram_user_id: int, first: str, last: str | None) -> None:
-    """An owner card made from the setting carries a placeholder name until its owner first writes /start."""
+    """An owner card made from the setting is called «Эгаси» until its owner first writes: then it takes their
+    Telegram name. (Older cards were «Эгаси <Telegram number>».)"""
     emp = (await session.execute(
         select(Employee).where(Employee.telegram_user_id == telegram_user_id)
     )).scalar_one_or_none()
-    if emp is None or emp.full_name != f"{PLACEHOLDER} {telegram_user_id}":
+    if emp is None or not is_placeholder(emp.full_name, telegram_user_id):
         return
     name = " ".join(f"{first or ''} {last or ''}".split())
     emp.full_name = name if len(name.split()) >= 2 else f"{name or PLACEHOLDER} {PLACEHOLDER}"

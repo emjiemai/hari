@@ -14,7 +14,7 @@ async def test_hari_owners_creates_or_promotes_and_never_demotes(session_scope, 
         touched = await ensure_owners(s, [77, 8632661510])
         assert emp.role == "owner" and len(touched) == 2
         new = await by_telegram(s, 8632661510)
-        assert new.role == "owner" and new.status == "active" and new.full_name == "Эгаси 8632661510"
+        assert new.role == "owner" and new.status == "active" and new.full_name == "Эгаси"  # no Telegram number in a name
         assert new.identity_verified_at is not None
         assert await ensure_owners(s, [77, 8632661510]) == []  # a second start changes nothing
         await claim_owner_name(s, 8632661510, "Шахзод", None)

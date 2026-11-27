@@ -27,6 +27,19 @@ def is_placeholder(full_name: str | None) -> bool:
     return any(name == normalize(p.lower()) for p in PLACEHOLDER_NAMES)
 
 
+async def unnumber_owner_cards(session: AsyncSession) -> int:
+    """Owner cards made from HARI_OWNERS used to be named «Эгаси <Telegram number>»: the number goes, and the
+    owner's Telegram name replaces «Эгаси» when they next write (hari.owners.claim_owner_name)."""
+    from hari.owners import PLACEHOLDER
+
+    changed = 0
+    for emp in (await session.execute(select(Employee).where(Employee.full_name.like(f"{PLACEHOLDER} %")))).scalars():
+        if emp.full_name[len(PLACEHOLDER) + 1:].isdigit():
+            emp.full_name = PLACEHOLDER
+            changed += 1
+    return changed
+
+
 async def close_test_requests(session: AsyncSession) -> int:
     testers = [e.id for e in (await session.execute(select(Employee))).scalars() if is_placeholder(e.full_name)]
     if not testers:
