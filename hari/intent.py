@@ -109,7 +109,7 @@ ACTIONS: dict[str, Action] = {a.name: a for a in [
     Action("app_purge", "hr", "delete an applicant's personal data (they asked for it)", '{"number": application number}'),
     Action("app_hold", "hr", "put a legal hold on an applicant's data", '{"number": application number}'),
     Action("close_all", "staff", "do it for ALL of them at once (cancel / remove / delete / reject / close / "
-           "accept everything): job applications (reject, or delete when they say delete/remove), the HR requests "
+           "accept everything; also \"these are done\", \"stop reminding me\" about a list HARI showed): job applications (reject, or delete when they say delete/remove), the HR requests "
            "employees wrote that wait for me (answer and close), onboarding step results waiting for me (accept or "
            "return)", '{"apps": true if applications are meant, "cases": true if HR requests are meant, '
            '"steps": "accept"|"return" if step results are meant, else null, "delete": true if they want them '

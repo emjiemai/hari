@@ -160,3 +160,32 @@ async def test_the_morning_message_has_no_tail(h):
     from hari import agenda
 
     assert "ёрдам бераман" not in __import__("inspect").getsource(agenda.morning_brief)
+
+
+# --------------------------------------------------------------------------- a clear order is done; the morning list is remembered
+
+@pytest.mark.parametrize("text,action,done", [
+    ("ochir unda", "app_purge", True),
+    ("Валининг маълумотини ўчир", "app_purge", True),
+    ("hammasini rad et", "close_all", True),
+    ("булар бажарилган", "close_all", True),
+    ("Валини рад эт", "app_reject", True),
+    ("Вали ҳақида нима дейсиз?", "app_reject", False),
+    ("Анварни раҳбар қил", "role_change", False),  # a role always waits for «Тасдиқланг»
+])
+def test_a_clear_order_needs_no_confirmation(text, action, done):
+    from hari.bot.handlers.chat import ordered
+
+    assert ordered(text, action) is done
+
+
+async def test_the_morning_list_is_remembered_for_what_comes_next(h, session_scope):
+    from hari import memory, scheduler
+    from hari.worktime import now_utc
+
+    async with session_scope() as s:
+        owner = (await s.execute(select(Employee).where(Employee.telegram_user_id == OWNER))).scalar_one()
+        await scheduler.morning_briefs(s, now_utc(), [(owner.id, "brief:test", "Хайрли тонг. Мурожаатлар: …")])
+    async with session_scope() as s:
+        turns = await memory.recent(s, owner, now_utc())
+    assert turns[-1][1] == "Хайрли тонг. Мурожаатлар: …"

@@ -35,9 +35,8 @@ async def statuses(session_scope) -> dict[str, str]:
 
 
 async def test_reject_by_name_without_any_number(h, session_scope):
-    replies = await h.say(OWNER, "Валини рад эт: тажрибаси бу ишга мос эмас")
-    assert "Тасдиқланг." in replies[0] and "Алиев Вали" in replies[0] and "A-2026" not in replies[0]
-    await h.say(OWNER, "ҳа")
+    replies = await h.say(OWNER, "Валини рад эт: тажрибаси бу ишга мос эмас")  # said plainly: done, not asked
+    assert not any("Тасдиқланг" in r or "A-2026" in r for r in replies)
     assert (await statuses(session_scope)) == {"Алиев Вали": "rejected", "Каримов Бобур": "submitted"}
     assert "бошқа номзодни танладик" in h.to(9001)[-1]
 

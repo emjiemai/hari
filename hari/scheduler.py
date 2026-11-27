@@ -134,6 +134,8 @@ async def morning_briefs(session: AsyncSession, now: datetime,
         msg = await queue(session, emp, "brief", key, text, now) if emp is not None else None
         if msg:
             queued.append(msg.id)
+            # Kept in their chat memory: "булар бажарилган", "кўрсат" are about this list.
+            await memory.remember(session, emp, "(эрталабки хабар)", text, now)
     return queued
 
 

@@ -24,9 +24,7 @@ async def test_interview_then_reject_tells_applicant(h_apply_done, session_scope
     h = h_apply_done
     number = await app_number(session_scope)
     assert number not in h.to(OWNER)[-1] and "суҳбатга чақир»" not in h.to(OWNER)[-1]  # by name, no number
-    await h.say(OWNER, f"{number} ни суҳбатга чақир")
-    assert "учрашмоқчимиз" not in h.to(APPLICANT)[-1]  # nothing before «ҳа»
-    await h.say(OWNER, "ҳа")
+    await h.say(OWNER, f"{number} ни суҳбатга чақир")  # a clear order: done at once, no «Тасдиқланг»
     assert "+998901234567" in h.to(APPLICANT)[-1] and "учрашмоқчимиз" in h.to(APPLICANT)[-1]
     asked = await h.say(HR, f"{number} ни рад эт")  # an interview isn't final
     assert "рад этиш асосини ёзинг" in asked[0]
@@ -35,7 +33,6 @@ async def test_interview_then_reject_tells_applicant(h_apply_done, session_scope
     assert "бошқа номзодни танладик" in h.to(APPLICANT)[-1]
     seen = len(h.to(APPLICANT))
     await h.say(OWNER, f"{number} ни суҳбатга чақир")  # too late
-    await h.say(OWNER, "ҳа")
     assert len(h.to(APPLICANT)) == seen
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
@@ -47,8 +44,7 @@ async def test_too_late_is_explained(h_apply_done, session_scope):
     h = h_apply_done
     number = await app_number(session_scope)
     await reject(h, HR, number=number)
-    await h.say(OWNER, f"{number} ни суҳбатга чақир")
-    replies = await h.say(OWNER, "ҳа")
+    replies = await h.say(OWNER, f"{number} ни суҳбатга чақир")
     assert "Кадрова Зайнаб" in replies[0] and "Рад этилган" in replies[0]
 
 

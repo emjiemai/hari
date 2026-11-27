@@ -139,8 +139,7 @@ async def test_interview_score_is_given_by_a_person_and_completes_the_total(h_ap
     h = h_apply_done
     async with session_scope() as s:
         number = (await s.execute(select(Application))).scalar_one().number
-    assert "Тасдиқланг." in (await h.say(A_OWNER, f"{number} ни суҳбатга чақир"))[0]
-    await h.say(A_OWNER, "ҳа")
+    assert "Тасдиқланг" not in (await h.say(A_OWNER, f"{number} ни суҳбатга чақир"))[0]
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
         app.scorecard = {"rubric_version": "1", "recommendation": "ready", "summary": "", "missing": [], "total": None,
@@ -173,9 +172,7 @@ async def test_deletion_request_is_decided_by_a_person(h_apply_done, session_sco
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
         assert app.full_name == "Алиев Вали" and app.deletion_requested_at is not None  # asked, not yet deleted
-    replies = await h.say(A_HR, f"{app.number} маълумотини ўчир")
-    assert "қайтариб бўлмайди" in replies[0]
-    replies = await h.say(A_HR, "ҳа")
+    replies = await h.say(A_HR, f"{app.number} маълумотини ўчир")  # «ўчир» means delete: done at once
     assert "шахсий маълумот ўчирилди" in replies[0] and "ўчирилди" in h.to(APPLICANT)[-1]
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
@@ -188,12 +185,11 @@ async def test_legal_hold_blocks_deletion(h_apply_done, session_scope, staff):
         await staff(s, "Юристов Камол", "lawyer", tg=LAWYER)
         number = (await s.execute(select(Application))).scalar_one().number
     await h.say(APPLICANT, "маълумотимни ўчиринг")
-    await h.say(A_HR, f"{number} legal hold")
-    replies = await h.say(A_HR, "ҳа")
-    assert "legal hold ўрнатилди" in replies[0] and "юристга хабар берилди" in replies[0]
+    replies = await h.say(A_HR, f"{number} legal hold")
+    assert "legal hold oʻrnatildi" in replies[0] and "yuristga xabar berildi" in replies[0]  # written in Latin: Latin back
     assert "legal hold" in h.to(LAWYER)[-1] and "қонуний сабабга кўра сақланмоқда" in h.to(APPLICANT)[-1]
-    await h.say(A_OWNER, f"{number} маълумотини ўчир")  # anyone deleting afterwards is refused
-    assert "Legal hold ўрнатилган" in (await h.say(A_OWNER, "ҳа"))[0]
+    replies = await h.say(A_OWNER, f"{number} маълумотини ўчир")  # anyone deleting afterwards is refused
+    assert "Legal hold ўрнатилган" in replies[0] and "Тасдиқланг" not in replies[0]
     async with session_scope() as s:
         app = (await s.execute(select(Application))).scalar_one()
         assert app.full_name == "Алиев Вали" and app.legal_hold is True and app.purged_at is None

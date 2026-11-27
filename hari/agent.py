@@ -196,15 +196,18 @@ async def _staff(session: AsyncSession, me: Me, args: dict, mask: Masker, now: d
 
 
 async def _applications(session: AsyncSession, me: Me, args: dict, mask: Masker, now: datetime) -> list[dict]:
-    q = select(Application).where(Application.number.is_not(None), Application.status != "draft")
+    q = select(Application).where(Application.number.is_not(None), Application.status != "draft",
+                                  Application.purged_at.is_(None))  # deleted data is gone: nothing to show or do
     if args.get("state") != "all":
         q = q.where(Application.status.in_(("submitted", "interview")))
     out = []
     from hari.apply.report import vacancy_title  # here: the report module imports the bot UI
+    from hari.apply.texts import STATUS_LABELS
 
     for app in (await session.execute(q.order_by(Application.submitted_at.desc()).limit(40))).scalars():
-        out.append({"number": app.number, "status": app.status, "position": await vacancy_title(session, app),
-                    "submitted": _when(app.submitted_at), "asks_deletion": bool(app.deletion_requested_at)})
+        out.append({"number": app.number, "status": STATUS_LABELS.get(app.status, app.status),
+                    "position": await vacancy_title(session, app), "submitted": _when(app.submitted_at),
+                    "asks_deletion": bool(app.deletion_requested_at), "legal_hold": bool(app.legal_hold)})
     return out
 
 
@@ -279,13 +282,17 @@ a real name.
 - Company rules, pay, leave policy, "how do I…", greetings, thanks, and anything about documents → \
 {"do": [{"action": "question", "args": {}}]}: that pipeline answers from approved documents only.
 - "say": in the language and alphabet the person wrote in (default Uzbek Cyrillic), polite «сиз», like a \
-helpful colleague, short and concrete — facts, names (codes), times. No instructions on what to type next, no \
+helpful colleague. SHORT: one or two sentences, or just the list. No apologies, no explanations of how HARI \
+works, no repeating what they said. No instructions on what to type next, no \
 menus, no "write X to do Y". Never state a fact that is not in CONTEXT or LOOKED data; if you do not know, \
 say so.
 - Use RECENT CONVERSATION for "him too", "the first one", "cancel that", "and Ali?".
 - "Don't ask me about these again", "stop reminding me", "I told you already" about items HARI keeps listing \
 (requests waiting for them, applications, step results) means: deal with them → close_all for that kind (and \
 "delete" when they say so). Do not explain what is waiting; just plan it.
+- Do not ask what they mean when one reading is clearly the likeliest (the list HARI just showed, the last \
+thing talked about): do it. Ask only when readings would do different things, in one short question.
+- Never list things that are already done, deleted or closed as if they still wait.
 - Never tell the person what to type, never ask them to write «ҳа» or any command, never describe HARI's \
 own state ("nothing was deleted yet, waiting for your confirmation").
 - Today is %(today)s (%(weekday)s). Dates as YYYY-MM-DD.
@@ -365,7 +372,7 @@ async def names_back(session: AsyncSession, text: str) -> str:
     text = CODE_IN_TEXT.sub(lambda m: names.get(f"E-{m.group(1)}", m.group(0)), text)
 
     apps = {a.number: a.full_name for a in (await session.execute(select(Application).where(
-        Application.number.is_not(None)))).scalars() if a.full_name}
+        Application.number.is_not(None), Application.purged_at.is_(None)))).scalars() if a.full_name}
 
     def app_name(m: re.Match) -> str:
         number = I.app_number(m.group(0))

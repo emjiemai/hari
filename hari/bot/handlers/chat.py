@@ -71,13 +71,30 @@ RISKY = {"app_reject", "app_interview", "app_purge", "app_hold", "app_hire", "em
          "close_all", "add_person", "new_employee"}
 FORMS = {"app_hire", "add_person", "new_employee"}  # they go on with questions of their own
 
+# Risky steps the person ordered in so many words: "ўчир" → deleted, "рад эт" → rejected, no «Тасдиқланг».
+# Roles and card changes are always confirmed (a role needs the one-time approval, spec 2.0 §25).
+ORDER_WORDS = {
+    "app_purge": ("ўчир", "очир", "удали", "удалить", "delete"),
+    "app_reject": ("рад эт", "рад қил", "отказ", "reject"),
+    "app_interview": ("суҳбатга чақир", "чақир", "пригласи", "invite"),
+    "app_hold": ("legal hold", "ушлаб тур", "сақлаб тур"),
+    "close_all": ("ўчир", "очир", "рад эт", "ёп", "бекор қил", "удали", "закрой", "отклони", "бажарилган", "қилинган",
+                  "сўрама", "эслатма"),
+}
+
+
+def ordered(text: str, action: str) -> bool:
+    """The message itself orders this step in so many words (Latin, Cyrillic or Russian)."""
+    words = normalize((text or "").lower())
+    return any(normalize(w) in words for w in ORDER_WORDS.get(action, ()))
+
 
 async def run(ctx: Ctx, intent: I.Intent) -> None:
     if not I.allowed(intent.action, ctx.emp.role, ctx.works, ctx.manages):
         await ctx.say(T.NOT_ALLOWED)
         return
-    if intent.action not in RISKY:
-        ctx.confirmed = True  # a small step: done at once, no «ҳа»
+    if intent.action not in RISKY or ordered(ctx.text, intent.action):
+        ctx.confirmed = True  # a small step, or a clear order: done at once, no «Тасдиқланг»
     await EXECUTORS[intent.action](ctx, intent.args)
 
 

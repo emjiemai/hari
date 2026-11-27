@@ -273,6 +273,12 @@ async def app_purge(ctx: Ctx, args: dict) -> None:
     app = await _pick_app(ctx, args, "app_purge", "Кимнинг маълумотини ўчирай?")
     if app is None:
         return
+    if app.purged_at:
+        await ctx.say("Бу ариза маълумоти аллақачон ўчирилган.")
+        return
+    if app.legal_hold:
+        await ctx.say("Legal hold ўрнатилган: маълумот ўчирилмайди, юрист кўриб чиқади.")
+        return
     if not ctx.confirmed:
         await ask_confirm(ctx, f"{app.full_name}: шахсий маълумотини ўчираман. Ариза рақами ва қарор "
                                "қолади. Буни қайтариб бўлмайди.", "app_purge", {"number": app.number})
